@@ -52,8 +52,8 @@ def extract_text(file_path: str, file_content: bytes) -> str:
     if ext not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"Unsupported file type: {ext}")
 
-    if file_content.size > MAX_FILE_SIZE:
-        raise ValueError(f"File too large: {file_content.size / 1024 / 1024:.1f}MB > 10MB limit")
+    if len(file_content) > MAX_FILE_SIZE:
+        raise ValueError(f"File too large: {len(file_content) / 1024 / 1024:.1f}MB > 10MB limit")
 
     if ext == ".txt":
         return extract_text_from_txt(file_content)

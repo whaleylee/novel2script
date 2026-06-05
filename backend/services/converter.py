@@ -238,9 +238,12 @@ async def convert_novel(
                 for scene in scenes:
                     scene["id"] = len(all_scenes) + 1
                     # Determine act by position
-                    act_idx = int((len(all_scenes) / (chapter_count * 3)) * 3) + 1
+                    scene_count = max(1, chapter_count * 3)
+                    act_idx = int((len(all_scenes) / scene_count) * 3) + 1
                     scene["act"] = min(act_idx, 3)
-                all_scenes.extend(scenes[:10])
+                    all_scenes.append(scene)
+                if len(all_scenes) > 100:
+                    break
 
                 # Accumulate new characters
                 for char in chapter_data.get("characters", []):

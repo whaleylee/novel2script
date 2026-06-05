@@ -146,14 +146,16 @@ async def convert_plain(request: ConvertRequest):
         )
 
     full_yaml = ""
+    in_yaml = False
     async for chunk in convert_novel(request):
-        if chunk.startswith("---YAML_OUTPUT_START---"):
+        if "---YAML_OUTPUT_START---" in chunk:
             in_yaml = True
+            chunk = chunk.replace("---YAML_OUTPUT_START---", "").strip()
             continue
-        if chunk.startswith("---YAML_OUTPUT_END---"):
+        if "---YAML_OUTPUT_END---" in chunk:
             break
-        if in_yaml:
-            full_yaml += chunk
+        if in_yaml and chunk.strip():
+            full_yaml += chunk + "\n"
 
     return {"yaml": full_yaml.strip()}
 
