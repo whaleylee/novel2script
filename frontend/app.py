@@ -64,6 +64,24 @@ GEMINI_MODELS = [
     ("Gemini 2.0 Flash", "gemini-2.0-flash"),
 ]
 
+XF_MODELS = [
+    ("Spark X2 Flash (可用)", "xsparkx2flash"),
+    ("Qwen3.5-35B-A3B (可用)", "xopqwen35v35b"),
+    ("Qwen3.6-35B-A3B (可用)", "xopqwen36v35b"),
+    ("Qwen3-Coder-Next-FP8 (可用)", "xop3qwencodernext"),
+    ("GLM-4.7-Flash (可用)", "xopglmv47flash"),
+    ("Spark X2", "xsparkx2"),
+    ("GLM-5.1", "xopglm51"),
+    ("GLM-5", "xopglm5"),
+    ("DeepSeek-V4-Pro", "xopdeepseekv4pro"),
+    ("DeepSeek-V4-Flash", "xopdeepseekv4flash"),
+    ("DeepSeek-V3.2", "xopdeepseekv32"),
+    ("Kimi-K2.6", "xopkimik26"),
+    ("Kimi-K2.5", "xopkimik25"),
+    ("MiniMax-M2.5", "xminimaxm25"),
+    ("Qwen3.5-397B-A17B", "xopqwen35397b"),
+]
+
 # ── State ──────────────────────────────────────────────────────
 
 class AppState:
@@ -115,6 +133,7 @@ def do_convert(
     title_input,
     author_input,
     provider,
+    xfyun_model,
     openai_api_key,
     openai_model,
     ollama_model,
@@ -162,10 +181,12 @@ def do_convert(
 
     # Resolve provider config
     api_key = None
-    model = openai_model
+    model = "xsparkx2flash"
     base_url = None
 
-    if provider == "openai":
+    if provider == "xfyun":
+        model = xfyun_model or "xsparkx2flash"
+    elif provider == "openai":
         api_key = openai_api_key or os.environ.get("OPENAI_API_KEY", "")
         model = openai_model
         if not api_key:
@@ -353,7 +374,9 @@ def export_screenplay(yaml_text):
 
 def on_provider_change(provider):
     """Update model choices based on provider."""
-    if provider == "openai":
+    if provider == "xfyun":
+        return gr.update(choices=XF_MODELS, value="xsparkx2flash", visible=True)
+    elif provider == "openai":
         return gr.update(choices=OPENAI_MODELS, value="gpt-4o-mini", visible=True)
     elif provider == "ollama":
         models = [(m, m) for m in state.ollama_models] if state.ollama_models else OLLAMA_MODELS_DEFAULT
@@ -472,14 +495,24 @@ def build_ui():
                         gr.HTML("<b>⚙️ AI 配置</b>")
 
                         provider = gr.Radio(
-                            ["openai", "ollama", "gemini"],
-                            value="openai",
+                            ["xfyun", "openai", "ollama", "gemini"],
+                            value="xfyun",
                             label="AI 提供商",
-                            info="OpenAI / Ollama / Gemini",
+                            info="讯飞 MaaS Coding / OpenAI / Ollama / Gemini",
                         )
 
+                        # Xfyun config
+                        with gr.Group(visible=True) as xfyun_group:
+                            xfyun_model = gr.Dropdown(
+                                choices=[k for k, v in XF_MODELS],
+                                value="xsparkx2flash",
+                                label="模型",
+                                allow_custom_value=False,
+                                info="讯飞 MaaS Coding API — 设置 XF_API_KEY 环境变量",
+                            )
+
                         # OpenAI config
-                        with gr.Group(visible=True) as openai_group:
+                        with gr.Group(visible=False) as openai_group:
                             openai_api_key = gr.Textbox(
                                 label="OpenAI API Key",
                                 placeholder="sk-...",
@@ -529,10 +562,12 @@ def build_ui():
                             )
 
                         def toggle_provider(p):
+                            show_xfyun = p == "xfyun"
                             show_openai = p == "openai"
                             show_ollama = p == "ollama"
                             show_gemini = p == "gemini"
                             return (
+                                gr.update(visible=show_xfyun),
                                 gr.update(visible=show_openai),
                                 gr.update(visible=show_ollama),
                                 gr.update(visible=show_gemini),
@@ -541,7 +576,7 @@ def build_ui():
                         provider.change(
                             fn=toggle_provider,
                             inputs=[provider],
-                            outputs=[openai_group, ollama_group, gemini_group],
+                            outputs=[xfyun_group, openai_group, ollama_group, gemini_group],
                         )
 
                         btn_refresh_ollama.click(
@@ -552,6 +587,17 @@ def build_ui():
                             ),
                             inputs=[ollama_base_url],
                             outputs=[ollama_model, api_status],
+                        )
+
+                        def on_xfyun_model_change(provider_val):
+                            if provider_val == "xfyun":
+                                return gr.update(choices=XF_MODELS, value="xsparkx2flash", visible=True)
+                            return gr.update()
+
+                        provider.change(
+                            fn=on_xfyun_model_change,
+                            inputs=[provider],
+                            outputs=[xfyun_model],
                         )
 
                         with gr.Row():
@@ -652,6 +698,7 @@ def build_ui():
                         input_method, text_input, file_input,
                         title_input, author_input,
                         provider,
+                        xfyun_model,
                         openai_api_key, openai_model,
                         ollama_model, ollama_base_url,
                         gemini_api_key, gemini_model,
