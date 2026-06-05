@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class AIConfig(BaseModel):
     """AI provider configuration."""
-    provider: Literal["openai", "ollama", "gemini"] = "openai"
+    provider: Literal["openai", "ollama", "gemini", "xfyun"] = "xfyun"
     api_key: Optional[str] = None
     model: str = "gpt-4o-mini"
     base_url: Optional[str] = None  # For Ollama / custom endpoints

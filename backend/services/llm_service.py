@@ -11,7 +11,7 @@ import litellm
 from litellm import acompletion, completion
 
 from backend.core.models import AIConfig
-from backend.core.config import OLLAMA_BASE_URL
+from backend.core.config import OLLAMA_BASE_URL, XF_API_KEY, XF_BASE_URL
 
 
 class LLMService:
@@ -31,8 +31,12 @@ class LLMService:
         }
         if config.api_key:
             kwargs["api_key"] = config.api_key
+        elif config.provider == "xfyun":
+            kwargs["api_key"] = XF_API_KEY
         if config.base_url:
             kwargs["base_url"] = config.base_url
+        elif config.provider == "xfyun":
+            kwargs["base_url"] = XF_BASE_URL
         return kwargs
 
     def _resolve_model(self, config: AIConfig) -> str:
@@ -43,6 +47,8 @@ class LLMService:
             return f"ollama/{config.model}"
         elif config.provider == "gemini":
             return f"gemini/{config.model}"
+        elif config.provider == "xfyun":
+            return f"openai/{config.model}"
         return config.model
 
     async def achat(self, messages: list[dict], config: AIConfig) -> str:

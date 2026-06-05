@@ -70,3 +70,26 @@ ELEMENT_TYPES = ["dialogue", "action", "narrative", "transition", "camera"]
 
 # Location types
 LOCATION_TYPES = ["ext", "int", "mixed"]
+
+# ── Xfyun (讯飞 MaaS Coding API) ─────────────────────────────────
+import os
+XF_API_KEY = os.environ.get("XF_API_KEY", "")
+XF_BASE_URL = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"
+
+XF_MODELS = [
+    ("Spark X2 Flash (可用)", "xsparkx2flash"),
+    ("Qwen3.5-35B-A3B (可用)", "xopqwen35v35b"),
+    ("Qwen3.6-35B-A3B (可用)", "xopqwen36v35b"),
+    ("Qwen3-Coder-Next-FP8 (可用)", "xop3qwencodernext"),
+    ("GLM-4.7-Flash (可用)", "xopglmv47flash"),
+    ("Spark X2", "xsparkx2"),
+    ("GLM-5.1", "xopglm51"),
+    ("GLM-5", "xopglm5"),
+    ("DeepSeek-V4-Pro", "xopdeepseekv4pro"),
+    ("DeepSeek-V4-Flash", "xopdeepseekv4flash"),
+    ("DeepSeek-V3.2", "xopdeepseekv32"),
+    ("Kimi-K2.6", "xopkimik26"),
+    ("Kimi-K2.5", "xopkimik25"),
+    ("MiniMax-M2.5", "xminimaxm25"),
+    ("Qwen3.5-397B-A17B", "xopqwen35397b"),
+]
