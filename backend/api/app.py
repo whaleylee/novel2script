@@ -117,10 +117,11 @@ async def convert_endpoint(
     async def generate():
         try:
             async for chunk in convert_novel(request):
-                yield f"data: {chunk}\n\n"
+                for line in chunk.rstrip("\n").split("\n"):
+                    yield f"data: {line}\n"
                 await asyncio.sleep(0.01)
         except Exception as e:
-            yield f"data: [ERROR] {str(e)}\n\n"
+            yield f"data: [ERROR] {str(e)}\n"
 
     return StreamingResponse(
         generate(),

@@ -259,14 +259,12 @@ def do_convert(
                     if "---YAML_OUTPUT_START---" in chunk:
                         in_yaml = True
                         chunk = chunk.replace("---YAML_OUTPUT_START---", "")
+                        continue
                     if "---YAML_OUTPUT_END---" in chunk:
                         in_yaml = False
-                        chunk = chunk.replace("---YAML_OUTPUT_END---", "")
+                        break
                     if in_yaml:
                         yaml_chunks.append(chunk)
-                    else:
-                        if chunk.strip():
-                            yield chunk, "".join(yaml_chunks)
 
             except Exception as e:
                 yield f"连接失败: {str(e)}", "".join(yaml_chunks)

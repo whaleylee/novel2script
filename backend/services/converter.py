@@ -335,8 +335,7 @@ async def convert_novel(
 
     final_yaml = yaml_to_string(final_data)
     yield "---YAML_OUTPUT_START---\n"
-    for line in final_yaml.split("\n"):
-        yield line + "\n"
+    yield final_yaml + "\n"
     yield "---YAML_OUTPUT_END---\n"
     yield f"\n剧本生成完成！共 {total_scenes} 个场景，{len(characters_list)} 个角色。\n"
 
