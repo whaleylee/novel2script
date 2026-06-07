@@ -465,8 +465,6 @@ def build_ui():
                             file_input = gr.File(
                                 label="上传文件",
                                 file_types=[".txt", ".docx", ".pdf"],
-                                file_count=1,
-                                height=100,
                             )
 
                         input_method.change(
@@ -504,10 +502,10 @@ def build_ui():
                         # Xfyun config
                         with gr.Group(visible=True) as xfyun_group:
                             xfyun_model = gr.Dropdown(
-                                choices=[k for k, v in XF_MODELS],
+                                choices=[v for k, v in XF_MODELS],
                                 value="xsparkx2flash",
                                 label="模型",
-                                allow_custom_value=False,
+                                allow_custom_value=True,
                                 info="讯飞 MaaS Coding API — 设置 XF_API_KEY 环境变量",
                             )
 
@@ -520,7 +518,7 @@ def build_ui():
                                 lines=1,
                             )
                             openai_model = gr.Dropdown(
-                                choices=[k for k, v in OPENAI_MODELS],
+                                choices=[v for k, v in OPENAI_MODELS],
                                 value="gpt-4o-mini",
                                 label="模型",
                                 allow_custom_value=False,
@@ -535,7 +533,7 @@ def build_ui():
                                 info="默认 localhost:11434",
                             )
                             ollama_model = gr.Dropdown(
-                                choices=[k for k, v in OLLAMA_MODELS_DEFAULT],
+                                choices=[v for k, v in OLLAMA_MODELS_DEFAULT],
                                 value="qwen2.5",
                                 label="模型",
                                 allow_custom_value=False,
@@ -555,7 +553,7 @@ def build_ui():
                                 lines=1,
                             )
                             gemini_model = gr.Dropdown(
-                                choices=[k for k, v in GEMINI_MODELS],
+                                choices=[v for k, v in GEMINI_MODELS],
                                 value="gemini-1.5-flash",
                                 label="模型",
                                 allow_custom_value=False,
@@ -638,11 +636,9 @@ def build_ui():
                         )
 
                         yaml_editor = gr.Code(
-                            label="📄 剧本 YAML（可编辑）",
+                            label="��? 剧本 YAML（可编辑）",
                             language="yaml",
                             lines=25,
-                            show_copy_button=True,
-                            wrap_lines=True,
                         )
 
                         with gr.Row():

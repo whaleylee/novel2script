@@ -73,7 +73,7 @@ LOCATION_TYPES = ["ext", "int", "mixed"]
 
 # ── Xfyun (讯飞 MaaS Coding API) ─────────────────────────────────
 import os
-XF_API_KEY = os.environ.get("XF_API_KEY", "")
+XF_API_KEY = os.environ.get("XF_API_KEY", "b08f362325862b46490549aa50813eaa:YzYzYmM2YTJhNDJjZjY0YWJhOTc4ZmQ2")
 XF_BASE_URL = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"
 
 XF_MODELS = [

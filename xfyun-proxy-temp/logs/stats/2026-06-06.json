@@ -1,0 +1,9 @@
+{
+  "date": "2026-06-06",
+  "requestCount": 0,
+  "totalPromptTokens": 0,
+  "totalCompletionTokens": 0,
+  "retries": 0,
+  "errors": 0,
+  "protocols": {}
+}
