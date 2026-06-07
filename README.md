@@ -2,6 +2,8 @@
 
 将 3+ 章节的小说文本智能转换为结构化剧本 YAML，降低小说改编剧本的门槛。
 
+📺 **Demo 视频**：[百度网盘下载](https://pan.baidu.com/s/1nQ9dugwhfK57amU8L9T-ow?pwd=byrz) 提取码: `byrz`
+
 ---
 
 ## 功能特性
