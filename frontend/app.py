@@ -252,7 +252,7 @@ def do_convert(
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
-                    chunk = line[6:].strip()
+                    chunk = line[6:]
                     if chunk.startswith("[ERROR]"):
                         yield f"{chunk[7:]}", ""
                         return
