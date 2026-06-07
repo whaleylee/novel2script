@@ -247,7 +247,7 @@ def do_export(yt, fmt):
 
 def build_ui():
     css = """
-    .gradio-container { max-width: 1600px !important; }
+    .gradio-container { max-width: 1800px !important; }
     #yaml-editor textarea { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; }
     """
 
@@ -267,8 +267,8 @@ def build_ui():
             # ═══ Tab 1: 转换 ═══
             with gr.Tab("小说转剧本"):
                 with gr.Row(equal_height=False):
-                    # --- 左侧：紧凑配置面板 ---
-                    with gr.Column(scale=1, min_width=340):
+                    # --- 左侧配置面板 ---
+                    with gr.Column(scale=2, min_width=420):
                         # 输入方式
                         input_method = gr.Radio(["text","file"], value="text", label="输入方式")
                         with gr.Group(visible=True) as text_group:
@@ -282,43 +282,42 @@ def build_ui():
                             title_input = gr.Textbox(label="剧本标题", placeholder="自动提取或手动填写", scale=2)
                             author_input = gr.Textbox(label="原作者", placeholder="选填", scale=1)
 
-                        # AI 提供商 + API Key（紧凑排列）
-                        with gr.Row():
-                            provider = gr.Dropdown([("讯飞 MaaS Coding","xfyun"),("OpenAI","openai"),("Ollama","ollama"),("Gemini","gemini")], value="xfyun", label="AI 提供商", scale=1)
-                            xfyun_api_key = gr.Textbox(label="API Key", placeholder="请输入讯飞 API Key", type="password", visible=True, scale=2)
-                            openai_api_key = gr.Textbox(label="API Key", placeholder="sk-...", type="password", visible=False, scale=2)
-                            ollama_api_key = gr.Textbox(label="API Key（无需填写）", visible=False, scale=2, interactive=False)
-                            gemini_api_key = gr.Textbox(label="API Key", placeholder="AIza...", type="password", visible=False, scale=2)
+                        # AI 提供商
+                        provider = gr.Dropdown([("讯飞 MaaS Coding","xfyun"),("OpenAI","openai"),("Ollama","ollama"),("Gemini","gemini")], value="xfyun", label="AI 提供商", scale=1)
 
-                        def on_provider_change(p):
-                            return tuple(gr.update(visible=p==x) for x in ["xfyun","openai","ollama","gemini"])
-                        provider.change(on_provider_change, [provider], [xfyun_api_key, openai_api_key, ollama_api_key, gemini_api_key])
+                        # API Key
+                        xfyun_api_key = gr.Textbox(label="讯飞 API Key", placeholder="请输入讯飞 MaaS Coding API Key", type="password", visible=True)
+                        openai_api_key = gr.Textbox(label="OpenAI API Key", placeholder="sk-...", type="password", visible=False)
+                        ollama_api_key = gr.Textbox(label="Ollama（无需 API Key）", visible=False, interactive=False)
+                        gemini_api_key = gr.Textbox(label="Gemini API Key", placeholder="AIza...", type="password", visible=False)
+
+                        provider.change(lambda p: (gr.update(visible=p=="xfyun"), gr.update(visible=p=="openai"), gr.update(visible=p=="ollama"), gr.update(visible=p=="gemini")), [provider], [xfyun_api_key, openai_api_key, ollama_api_key, gemini_api_key])
 
                         # 模型 + 风格
                         with gr.Row():
-                            xfyun_model = gr.Dropdown(choices=[v for _,v in XF_MODELS], value="xsparkx2flash", label="模型", visible=True, scale=1)
-                            openai_model = gr.Dropdown(choices=[v for _,v in OPENAI_MODELS], value="gpt-4o-mini", label="模型", visible=False, scale=1)
-                            ollama_model = gr.Dropdown(choices=[v for _,v in OLLAMA_MODELS], value="qwen2.5", label="模型", visible=False, scale=1)
-                            gemini_model = gr.Dropdown(choices=[v for _,v in GEMINI_MODELS], value="gemini-1.5-flash", label="模型", visible=False, scale=1)
+                            xfyun_model = gr.Dropdown(choices=[v for _,v in XF_MODELS], value="xsparkx2flash", label="模型", visible=True, scale=2)
+                            openai_model = gr.Dropdown(choices=[v for _,v in OPENAI_MODELS], value="gpt-4o-mini", label="模型", visible=False, scale=2)
+                            ollama_model = gr.Dropdown(choices=[v for _,v in OLLAMA_MODELS], value="qwen2.5", label="模型", visible=False, scale=2)
+                            gemini_model = gr.Dropdown(choices=[v for _,v in GEMINI_MODELS], value="gemini-1.5-flash", label="模型", visible=False, scale=2)
                             style_input = gr.Dropdown(choices=[(x[0], x[1]) for x in STYLE_CHOICES], value="cinematic", label="剧本风格", scale=1)
 
                         provider.change(lambda p: (gr.update(visible=p=="xfyun"), gr.update(visible=p=="openai"), gr.update(visible=p=="ollama"), gr.update(visible=p=="gemini")), [provider], [xfyun_model, openai_model, ollama_model, gemini_model])
 
                         # Temperature + Max Tokens
                         with gr.Row():
-                            temperature = gr.Slider(0.0, 2.0, 0.7, step=0.1, label="创意度 (Temperature)")
-                            max_tokens = gr.Slider(512, 32768, 8192, step=256, label="最大长度 (Max Tokens)")
+                            temperature = gr.Slider(0.0, 2.0, 0.7, step=0.1, label="创意度")
+                            max_tokens = gr.Slider(512, 32768, 8192, step=256, label="最大长度")
 
-                        # 转换按钮 + 状态
-                        btn_convert = gr.Button("开始转换", variant="primary", size="lg")
-                        status_output = gr.Textbox(label="处理状态", lines=2, interactive=False)
-
-                        # Ollama 刷新
+                        # Ollama 地址 + 刷新
                         with gr.Row(visible=False) as ollama_row:
                             ollama_base_url = gr.Textbox(value="http://localhost:11434", label="Ollama 地址", scale=2)
                             btn_refresh = gr.Button("检测模型", size="sm", scale=1)
                         provider.change(lambda p: gr.update(visible=p=="ollama"), [provider], [ollama_row])
                         btn_refresh.click(lambda url: (fetch_ollama_models() or [], f"发现 {len(state.ollama_models)} 个模型" if state.ollama_models else "未发现运行中的模型"), [ollama_base_url], [ollama_model, api_status])
+
+                        # 转换按钮 + 状态
+                        btn_convert = gr.Button("开始转换", variant="primary", size="lg")
+                        status_output = gr.Textbox(label="处理状态", lines=2, interactive=False)
 
                     # --- 右侧：双栏输出 ---
                     with gr.Column(scale=3, min_width=600):
