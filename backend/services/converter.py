@@ -11,8 +11,10 @@ from typing import AsyncIterator, Optional
 from backend.core.models import AIConfig, ConvertOptions, ConvertRequest
 from backend.services.llm_service import llm_service
 from backend.services.file_parser import detect_chapters, analyze_text
+from backend.core.config import STYLE_PRESETS
 
 
+# Base system prompt (style suffix appended at runtime)
 SYSTEM_PROMPT = """你是一位专业的剧本改编师，负责将小说文本改编为结构化剧本 YAML。
 严格遵循以下 YAML Schema（YAML 格式，非 JSON）：
 
@@ -93,7 +95,14 @@ def build_chapter_prompt(chapter_title: str, chapter_text: str, options: Convert
             for c in all_known_chars[:10]
         )
 
-    user_content = f"## 章节：{chapter_title}\n\n{chapter_text[:8000]}{char_context}\n\n请将以上章节改编为剧本 YAML 的场景定义。只输出 YAML 代码，不要解释。"
+    style_config = STYLE_PRESETS.get(options.style, STYLE_PRESETS["cinematic"])
+    style_suffix = style_config["prompt_suffix"]
+
+    user_content = (
+        f"## 章节：{chapter_title}\n\n{chapter_text[:8000]}{char_context}"
+        f"{style_suffix}\n\n"
+        "请将以上章节改编为剧本 YAML 的场景定义。只输出 YAML 代码，不要解释。"
+    )
 
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -165,21 +174,21 @@ async def convert_novel(
     chapters = detect_chapters(text)
     chapter_count = len(chapters)
 
-    yield f"检测到 {chapter_count} 个章节\n"
+    yield f"[STEP_1] 检测到 {chapter_count} 个章节\n"
     if chapter_count < 3:
         raise ValueError(f"章节数不足：检测到 {chapter_count} 个章节，需要至少 3 个章节")
 
     # Step 2: Quick text analysis
     analysis = analyze_text(text)
-    yield f"字数：{analysis['word_count']:,} 字，潜在角色：{len(analysis['potential_characters'])} 个\n"
+    yield f"[STEP_2] 字数：{analysis['word_count']:,} 字，潜在角色：{len(analysis['potential_characters'])} 个\n"
 
     # Step 3: Global analysis
-    yield "正在分析全局结构（角色、幕结构）...\n"
+    yield "[STEP_3] 正在分析全局结构（角色、幕结构）...\n"
 
     # First pass: summarize each chapter
     chapter_summaries = []
     for i, (title, content) in enumerate(chapters):
-        yield f"正在摘要章节 {i + 1}/{chapter_count}: {title}\n"
+        yield f"[STEP_3] 正在摘要章节 {i + 1}/{chapter_count}: {title}\n"
         messages = build_chapter_prompt(title, content[:3000], options)
         try:
             summary_text = await llm_service.achat(messages, config)
@@ -196,7 +205,7 @@ async def convert_novel(
         chapter_summaries.append({"title": title, "summary": summary_text[:500]})
 
     # Step 4: Global analysis for characters + act structure
-    yield "正在构建角色图谱和幕结构...\n"
+    yield "[STEP_3] 正在构建角色图谱和幕结构...\n"
     global_messages = build_summary_prompt(chapter_summaries, options)
     try:
         global_yaml_raw = await llm_service.achat(global_messages, config)
@@ -223,12 +232,12 @@ async def convert_novel(
         }
 
     # Step 5: Per-chapter scene generation
-    yield "正在逐章生成场景...\n"
+    yield "[STEP_4] 正在逐章生成场景...\n"
     all_scenes = []
     character_map = {c["id"]: c for c in (global_data or {}).get("characters", [])}
 
     for i, (title, content) in enumerate(chapters):
-        yield f"正在生成第 {i + 1}/{chapter_count} 章的场景...\n"
+        yield f"[STEP_4] 正在生成第 {i + 1}/{chapter_count} 章的场景...\n"
         messages = build_chapter_prompt(title, content, options, list(character_map.values()))
         try:
             chapter_yaml_raw = await llm_service.achat(messages, config)
@@ -331,7 +340,7 @@ async def convert_novel(
         "scenes": all_scenes[:100],  # Cap at 100 scenes
     }
 
-    yield "\n生成完成！正在格式化输出...\n"
+    yield "\n[STEP_5] 生成完成！正在格式化输出...\n"
 
     final_yaml = yaml_to_string(final_data)
     yield "---YAML_OUTPUT_START---\n"

@@ -71,7 +71,65 @@ ELEMENT_TYPES = ["dialogue", "action", "narrative", "transition", "camera"]
 # Location types
 LOCATION_TYPES = ["ext", "int", "mixed"]
 
-# ── Xfyun (讯飞 MaaS Coding API) ─────────────────────────────────
+# ── Script Style Presets ───────────────────────────────────────────
+
+STYLE_PRESETS = {
+    "cinematic": {
+        "name": "电影化",
+        "description": "强镜头语言，强调画面感，适合拍电影",
+        "prompt_suffix": (
+            "\n\n【风格约束】\n"
+            "1. 多用 camera 类型元素描述镜头运动（推、拉、摇、跟）\n"
+            "2. action 描述要具体到肢体动作和表情\n"
+            "3. 对话精简有力，旁白点到为止\n"
+            "4. 注重空间感和视觉节奏\n"
+        ),
+    },
+    "theatrical": {
+        "name": "舞台戏剧",
+        "description": "偏舞台剧风格，对话密集，动作描写少",
+        "prompt_suffix": (
+            "\n\n【风格约束】\n"
+            "1. 以 dialogue 为主，减少 camera 和 action\n"
+            "2. 场景描述简洁，聚焦人物\n"
+            "3. 旁白使用舞台指示风格（*此处有灯光变化*）\n"
+            "4. 适合室内剧或情感密集场景\n"
+        ),
+    },
+    "practical": {
+        "name": "可拍摄剧本",
+        "description": "注重可操作性，台词口语化，适合低成本制作",
+        "prompt_suffix": (
+            "\n\n【风格约束】\n"
+            "1. location 以实景为主，避免复杂特效\n"
+            "2. 对话口语化、生活化\n"
+            "3. 减少 camera，多写可执行的 action\n"
+            "4. 控制每场角色数量，便于实际拍摄\n"
+        ),
+    },
+    "literary": {
+        "name": "文学剧本",
+        "description": "保留文学性，旁白丰富，适合艺术片",
+        "prompt_suffix": (
+            "\n\n【风格约束】\n"
+            "1. narrative 元素丰富，保留小说的诗意\n"
+            "2. dialogue 可以更文学化，不追求口语\n"
+            "3. 场景转换可以更自由，不受时空限制\n"
+            "4. 保留小说的意象和隐喻\n"
+        ),
+    },
+    "teleplay": {
+        "name": "电视剧节奏",
+        "description": "场景短，冲突频繁，适合分集剧本",
+        "prompt_suffix": (
+            "\n\n【风格约束】\n"
+            "1. 场景拆分更细，每场控制在2-3分钟\n"
+            "2. 每场结尾留悬念或钩子\n"
+            "3. 节奏快，对话简洁\n"
+            "4. 适合25-45分钟/集的剧集\n"
+        ),
+    },
+}
 import os
 XF_API_KEY = os.environ.get("XF_API_KEY", "b08f362325862b46490549aa50813eaa:YzYzYmM2YTJhNDJjZjY0YWJhOTc4ZmQ2")
 XF_BASE_URL = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"

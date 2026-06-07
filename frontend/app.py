@@ -3,72 +3,13 @@ Novel2Script — Gradio Web Interface
 AI-powered novel to screenplay YAML converter.
 """
 
-import os
-import json
-import threading
-import time
-import httpx
+import os, re, time, httpx, threading, json
 import gradio as gr
 from datetime import datetime
 
-# ── Theme & Constants ──────────────────────────────────────────
-
-THEME = gr.themes.Soft(
-    primary_hue="indigo",
-    secondary_hue="slate",
-    neutral_hue="slate",
-)
-
-CSS = """
-#app-header { text-align: center; padding: 1rem 0; }
-.gradio-container { max-width: 1400px !important; }
-#yaml-editor textarea { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; font-size: 13px !important; }
-.status-bar { padding: 8px 16px; border-radius: 8px; font-size: 13px; }
-.panel-section { padding: 16px; border-radius: 12px; background: var(--background-fill-secondary); }
-"""
-
-APP_TITLE = """
-# Novel2Script · AI 小说转剧本
-
-*将小说文本智能转换为结构化剧本 YAML*
-
----
-"""
+# ── Constants ───────────────────────────────────────────────────
 
 API_BASE = os.environ.get("NOVEL2SCRIPT_API", "http://localhost:8000")
-
-GENRE_CHOICES = [
-    ("剧情", "drama"),
-    ("悬疑", "thriller"),
-    ("科幻", "sci_fi"),
-    ("奇幻", "fantasy"),
-    ("爱情", "romance"),
-    ("喜剧", "comedy"),
-    ("恐怖", "horror"),
-    ("动作", "action"),
-    ("历史", "historical"),
-    ("其他", "other"),
-]
-
-OPENAI_MODELS = [
-    ("GPT-4o（推荐）", "gpt-4o"),
-    ("GPT-4o Mini（便宜快速）", "gpt-4o-mini"),
-    ("GPT-4 Turbo", "gpt-4-turbo"),
-    ("GPT-3.5 Turbo", "gpt-3.5-turbo"),
-]
-
-OLLAMA_MODELS_DEFAULT = [
-    ("qwen2.5（通义千问）", "qwen2.5"),
-    ("deepseek-r1（深度求索）", "deepseek-r1"),
-    ("llama3.1", "llama3.1"),
-    ("mistral", "mistral"),
-]
-
-GEMINI_MODELS = [
-    ("Gemini 1.5 Flash（推荐）", "gemini-1.5-flash"),
-    ("Gemini 1.5 Pro", "gemini-1.5-pro"),
-    ("Gemini 2.0 Flash", "gemini-2.0-flash"),
-]
 
 XF_MODELS = [
     ("Spark X2 Flash (可用)", "xsparkx2flash"),
@@ -76,158 +17,302 @@ XF_MODELS = [
     ("Qwen3.6-35B-A3B (可用)", "xopqwen36v35b"),
     ("Qwen3-Coder-Next-FP8 (可用)", "xop3qwencodernext"),
     ("GLM-4.7-Flash (可用)", "xopglmv47flash"),
-    ("Spark X2", "xsparkx2"),
-    ("GLM-5.1", "xopglm51"),
-    ("GLM-5", "xopglm5"),
-    ("DeepSeek-V4-Pro", "xopdeepseekv4pro"),
-    ("DeepSeek-V4-Flash", "xopdeepseekv4flash"),
-    ("DeepSeek-V3.2", "xopdeepseekv32"),
-    ("Kimi-K2.6", "xopkimik26"),
-    ("Kimi-K2.5", "xopkimik25"),
-    ("MiniMax-M2.5", "xminimaxm25"),
+    ("Spark X2", "xsparkx2"), ("GLM-5.1", "xopglm51"), ("GLM-5", "xopglm5"),
+    ("DeepSeek-V4-Pro", "xopdeepseekv4pro"), ("DeepSeek-V4-Flash", "xopdeepseekv4flash"),
+    ("DeepSeek-V3.2", "xopdeepseekv32"), ("Kimi-K2.6", "xopkimik26"),
+    ("Kimi-K2.5", "xopkimik25"), ("MiniMax-M2.5", "xminimaxm25"),
     ("Qwen3.5-397B-A17B", "xopqwen35397b"),
 ]
 
-# ── State ──────────────────────────────────────────────────────
+OPENAI_MODELS = [
+    ("GPT-4o (推荐)", "gpt-4o"), ("GPT-4o Mini", "gpt-4o-mini"),
+    ("GPT-4 Turbo", "gpt-4-turbo"), ("GPT-3.5 Turbo", "gpt-3.5-turbo"),
+]
+OLLAMA_MODELS = [("qwen2.5", "qwen2.5"), ("deepseek-r1", "deepseek-r1"), ("llama3.1", "llama3.1"), ("mistral", "mistral")]
+GEMINI_MODELS = [("Gemini 1.5 Flash", "gemini-1.5-flash"), ("Gemini 1.5 Pro", "gemini-1.5-pro"), ("Gemini 2.0 Flash", "gemini-2.0-flash")]
+
+STYLE_CHOICES = [
+    ("电影化 - 强镜头语言，视觉感强", "cinematic"),
+    ("舞台戏剧 - 对话密集，聚焦人物", "theatrical"),
+    ("可拍摄剧本 - 口语化，便于拍摄", "practical"),
+    ("文学剧本 - 保留诗意，适合艺术片", "literary"),
+    ("电视剧节奏 - 快节奏，短场景", "teleplay"),
+]
+
+EXPORT_FORMATS = [
+    ("YAML (.yaml)", "yaml"), ("文本剧本 (.txt)", "txt"),
+    ("Fountain (.fountain)", "fountain"), ("JSON (.json)", "json"),
+]
+
+# ── State ───────────────────────────────────────────────────────
 
 class AppState:
     def __init__(self):
         self.ollama_connected = False
         self.ollama_models = []
-        self.last_yaml = ""
-        self.converting = False
-        self.api_health = False
-
-
 state = AppState()
 
-# ── Helpers ──────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────
 
 def check_api():
-    """Check backend health."""
     try:
-        resp = httpx.get(f"{API_BASE}/health", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            state.api_health = True
-            state.ollama_connected = data.get("ollama_connected", False)
-            return data
+        r = httpx.get(f"{API_BASE}/health", timeout=5)
+        if r.status_code == 200:
+            d = r.json()
+            state.ollama_connected = d.get("ollama_connected", False)
+            return d
     except Exception:
-        state.api_health = False
-    return {"status": "offline", "ollama_connected": False}
-
+        pass
+    return {"status": "offline"}
 
 def fetch_ollama_models():
-    """Fetch available Ollama models."""
     try:
-        resp = httpx.get(f"{API_BASE}/ollama/models", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            state.ollama_connected = data.get("connected", False)
-            models = data.get("models", [])
-            state.ollama_models = [m.get("name", "") for m in models if m.get("name")]
+        r = httpx.get(f"{API_BASE}/ollama/models", timeout=5)
+        if r.status_code == 200:
+            d = r.json()
+            state.ollama_connected = d.get("connected", False)
+            state.ollama_models = [m.get("name","") for m in d.get("models",[]) if m.get("name")]
             return state.ollama_models
     except Exception:
         state.ollama_connected = False
     return []
 
+# ── YAML Preview Renderer ───────────────────────────────────────
+
+def render_preview(yaml_text):
+    """Render YAML into a beautiful HTML preview."""
+    if not yaml_text or not yaml_text.strip():
+        return "<div style='color:#888;padding:2rem;text-align:center'>等待转换...</div>"
+
+    try:
+        import yaml
+        data = yaml.safe_load(yaml_text)
+        if not data:
+            return "<div style='color:#888;padding:2rem'>解析中...</div>"
+    except Exception:
+        return "<div style='color:#888;padding:2rem;text-align:center'>等待转换完成...</div>"
+
+    script = data.get("script", {})
+    chars = data.get("characters", [])
+    scenes = data.get("scenes", [])
+    meta = data.get("metadata", {})
+    acts = data.get("act_structure", [])
+
+    char_map = {c.get("id",""): c.get("name","") for c in chars}
+
+    html = "<div style='font-family:system-ui,sans-serif;font-size:14px;line-height:1.7;padding:8px'>"
+
+    # Header
+    title = script.get("title", "未命名")
+    author = script.get("author", "")
+    genre = script.get("genre", "")
+    logline = script.get("logline", "")
+    html += f"<div style='background:linear-gradient(135deg,#4338ca,#6366f1);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:16px'>"
+    html += f"<h2 style='margin:0 0 4px 0;font-size:22px'>{title}</h2>"
+    if author: html += f"<span style='opacity:0.85'>✍ {author}</span> &nbsp;"
+    if genre: html += f"<span style='opacity:0.85'>🎬 {genre}</span>"
+    if logline: html += f"<p style='margin:8px 0 0 0;opacity:0.9;font-style:italic'>{logline}</p>"
+    html += "</div>"
+
+    # Stats bar
+    html += "<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px'>"
+    html += f"<span style='background:#eef2ff;color:#4338ca;padding:6px 14px;border-radius:20px;font-weight:600'>🎬 {meta.get('total_scenes','?')} 场景</span>"
+    html += f"<span style='background:#fef3c7;color:#92400e;padding:6px 14px;border-radius:20px;font-weight:600'>👥 {meta.get('total_characters','?')} 角色</span>"
+    html += f"<span style='background:#ecfdf5;color:#065f46;padding:6px 14px;border-radius:20px;font-weight:600'>⏱ {meta.get('estimated_duration','?')}</span>"
+    html += f"<span style='background:#fdf2f8;color:#9d174d;padding:6px 14px;border-radius:20px;font-weight:600'>🏗 3 幕</span>"
+    html += "</div>"
+
+    # Characters
+    if chars:
+        html += "<details open style='margin-bottom:12px'><summary style='cursor:pointer;font-weight:700;font-size:15px;padding:8px 0;color:#1e293b'>👤 角色表 ({})</summary>".format(len(chars))
+        html += "<div style='display:flex;gap:8px;flex-wrap:wrap;padding:8px 0'>"
+        role_colors = {"protagonist":"#6366f1","antagonist":"#ef4444","supporting":"#10b981","minor":"#6b7280","narrator":"#f59e0b"}
+        role_labels = {"protagonist":"主角","antagonist":"反派","supporting":"配角","minor":"次要","narrator":"旁白"}
+        for c in chars[:12]:
+            role = c.get("role","")
+            color = role_colors.get(role, "#6b7280")
+            label = role_labels.get(role, role)
+            html += f"<div style='border-left:3px solid {color};padding:6px 10px;background:#f8fafc;border-radius:6px;min-width:100px'>"
+            html += f"<b>{c.get('name','?')}</b> <span style='font-size:11px;color:{color}'>{label}</span>"
+            desc = c.get("description","")[:40]
+            if desc: html += f"<br><span style='font-size:12px;color:#64748b'>{desc}</span>"
+            html += "</div>"
+        html += "</div></details>"
+
+    # Act structure
+    if acts:
+        html += "<div style='display:flex;gap:8px;margin-bottom:16px'>"
+        colors = ["#6366f1","#f59e0b","#10b981"]
+        for a in acts:
+            idx = a.get("act",1)-1
+            c = colors[idx] if idx < 3 else "#6b7280"
+            html += f"<div style='flex:1;background:{c}18;border:1px solid {c}40;border-radius:8px;padding:10px;text-align:center'>"
+            html += f"<div style='font-weight:700;color:{c}'>{a.get('title','')}</div>"
+            html += f"<div style='font-size:22px;font-weight:800'>{len(a.get('scenes',[]))}</div><div style='font-size:11px;color:#64748b'>场景</div>"
+            html += "</div>"
+        html += "</div>"
+
+    # Scenes
+    html += "<details open style='margin-bottom:12px'><summary style='cursor:pointer;font-weight:700;font-size:15px;padding:8px 0;color:#1e293b'>🎬 场景列表 ({})</summary>".format(len(scenes))
+    for s in scenes[:20]:
+        sid = s.get("id","?")
+        loc = s.get("location","")
+        t = s.get("time","")
+        loc_type = s.get("location_type","")
+        weather = s.get("weather","")
+        loc_icon = "🏠" if loc_type == "int" else ("🌳" if loc_type == "ext" else "🏠🌳")
+        chars_in = [char_map.get(c,c) for c in s.get("characters",[])]
+        elements = s.get("elements",[])
+        d_count = sum(1 for e in elements if e.get("type")=="dialogue")
+        a_count = sum(1 for e in elements if e.get("type")=="action")
+        n_count = sum(1 for e in elements if e.get("type")=="narrative")
+        c_count = sum(1 for e in elements if e.get("type")=="camera")
+
+        act_num = s.get("act","?")
+        html += f"<div style='border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin-bottom:8px'>"
+        html += f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:4px'>"
+        html += f"<b style='color:#1e293b'>场景 {sid}</b>"
+        html += f"<span style='font-size:11px;background:#f1f5f9;padding:2px 8px;border-radius:10px'>第{act_num}幕</span>"
+        html += f"</div>"
+        html += f"<div style='color:#64748b;font-size:13px'>{loc_icon} {loc} · {t}"
+        if weather: html += f" · {weather}"
+        html += f"</div>"
+        if chars_in: html += f"<div style='font-size:12px;color:#94a3b8;margin:2px 0'>出场: {', '.join(chars_in[:6])}</div>"
+        html += f"<div style='display:flex;gap:8px;margin-top:4px;font-size:11px;color:#64748b'>"
+        html += f"<span>💬x{d_count}</span><span>🎬x{a_count}</span><span>📖x{n_count}</span><span>🎥x{c_count}</span>"
+        html += "</div></div>"
+    if len(scenes) > 20:
+        html += f"<div style='color:#94a3b8;text-align:center;padding:8px'>... 还有 {len(scenes)-20} 个场景</div>"
+    html += "</details>"
+
+    html += "</div>"
+    return html
+
+
+def parse_progress(msg):
+    """Extract progress percentage from backend status messages."""
+    if "[STEP_1]" in msg: return 0.08, "📖 章节识别"
+    if "[STEP_2]" in msg: return 0.16, "📊 文本分析"
+    if "[STEP_3]" in msg and "正在构建" in msg: return 0.30, "🔍 构建角色图谱"
+    if "[STEP_3]" in msg and "正在摘要" in msg:
+        m = re.search(r"(\d+)/(\d+)", msg)
+        if m:
+            done, total = int(m.group(1)), int(m.group(2))
+            pct = 0.18 + (done/total) * 0.12
+            return min(pct, 0.38), f"📝 摘要章节 {done}/{total}"
+        return 0.25, "📝 摘要章节"
+    if "[STEP_4]" in msg and "正在生成" in msg:
+        m = re.search(r"(\d+)/(\d+)", msg)
+        if m:
+            done, total = int(m.group(1)), int(m.group(2))
+            pct = 0.38 + (done/total) * 0.52
+            return min(pct, 0.92), f"⚙️ 生成场景 {done}/{total}"
+        return 0.45, "⚙️ 逐章生成场景"
+    if "[STEP_5]" in msg or "生成完成" in msg: return 0.98, "📦 格式化输出"
+    return None, None
+
+
+# ── Convert Logic ───────────────────────────────────────────────
 
 def do_convert(
-    input_method,
-    text_input,
-    file_input,
-    title_input,
-    author_input,
-    provider,
-    xfyun_model,
-    openai_api_key,
-    openai_model,
-    ollama_model,
-    ollama_base_url,
-    gemini_api_key,
-    gemini_model,
-    temperature,
-    max_tokens,
-    add_camera,
-    add_transitions,
-    preserve_narrative,
-    progress_callback=None,
+    input_method, text_input, file_input, title_input, author_input,
+    provider, xfyun_model, openai_api_key, openai_model,
+    ollama_model, ollama_base_url, gemini_api_key, gemini_model,
+    temperature, max_tokens, style,
+    progress=gr.Progress(),
 ):
-    """Main conversion function."""
-    import io
+    """Main conversion. Updates progress bar as conversion runs."""
 
+    # Resolve text
     if input_method == "text":
         raw_text = text_input.strip()
     elif input_method == "file":
         if file_input is None:
-            yield "请上传文件", ""
+            yield "请上传文件", "", render_preview("")
             return
         if isinstance(file_input, dict):
-            file_path = file_input.get("path", "")
+            fpath = file_input.get("path", "")
         elif isinstance(file_input, str):
-            file_path = file_input
+            fpath = file_input
         else:
-            file_path = str(file_input)
+            fpath = str(file_input)
         try:
-            with open(file_path, "rb") as f:
-                file_content = f.read()
+            with open(fpath, "rb") as f:
+                raw_text = f.read().decode("utf-8", errors="replace")
         except Exception:
-            file_content = file_input
-        raw_text = file_content.decode("utf-8", errors="replace")
+            yield "文件读取失败", "", render_preview("")
+            return
     else:
         raw_text = text_input.strip() if text_input else ""
 
     if len(raw_text) < 500:
-        yield "文本内容过短（至少需要 500 字符）", ""
+        yield "文本内容过短（至少需要 500 字符）", "", render_preview("")
         return
 
-    api_key = None
-    model = "xsparkx2flash"
-    base_url = None
-
+    # Resolve config
+    api_key = None; model = "xsparkx2flash"; base_url = None
     if provider == "xfyun":
         model = xfyun_model or "xsparkx2flash"
     elif provider == "openai":
         api_key = openai_api_key or os.environ.get("OPENAI_API_KEY", "")
         model = openai_model
-        if not api_key:
-            yield "请输入 OpenAI API Key", ""
-            return
     elif provider == "ollama":
         model = ollama_model or "qwen2.5"
         base_url = ollama_base_url or "http://localhost:11434"
-        if not state.ollama_connected:
-            yield "未检测到 Ollama，请确保 Ollama 服务已启动", ""
     elif provider == "gemini":
         api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "")
         model = gemini_model
-        if not api_key:
-            yield "请输入 Gemini API Key", ""
-            return
 
-    # Use /convert/plain - simpler, returns complete YAML
+    # Use SSE streaming endpoint for progress, then get final YAML
     try:
-        yield "正在转换，请稍候（通常需要 2-5 分钟）...", ""
         import requests as sync_requests
 
+        # Phase 1: stream status for progress bar
+        with sync_requests.post(
+            f"{API_BASE}/convert",
+            data={
+                "text": raw_text, "provider": provider, "model": model,
+                "temperature": str(temperature), "max_tokens": str(max_tokens),
+                "title": title_input or "", "author": author_input or "",
+                "api_key": api_key or "", "base_url": base_url or "",
+            },
+            stream=True, timeout=600,
+        ) as stream_resp:
+            if stream_resp.status_code != 200:
+                yield f"请求失败: HTTP {stream_resp.status_code}", "", render_preview("")
+                return
+
+            last_status = ""
+            for line in stream_resp.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data: "):
+                    continue
+                chunk = line[6:]
+                if chunk.startswith("[ERROR]"):
+                    yield f"错误: {chunk[7:]}", "", render_preview("")
+                    return
+                if "---YAML_OUTPUT_START---" in chunk or "---YAML_OUTPUT_END---" in chunk:
+                    continue
+                if chunk.strip():
+                    last_status = chunk.strip()
+                    pct, label = parse_progress(last_status)
+                    if pct is not None and label:
+                        progress(pct, desc=label)
+                    yield last_status, "", render_preview("")
+
+        # Phase 2: get final YAML via plain endpoint
+        progress(0.95, desc="📦 获取最终结果")
         resp = sync_requests.post(
             f"{API_BASE}/convert/plain",
             json={
                 "text": raw_text,
-                "config": {
-                    "provider": provider,
-                    "model": model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                },
-                "title": title_input or "",
-                "author": author_input or "",
+                "config": {"provider": provider, "model": model, "temperature": temperature, "max_tokens": max_tokens},
+                "title": title_input or "", "author": author_input or "",
             },
             timeout=600,
         )
 
         if resp.status_code != 200:
-            yield f"转换失败: {resp.text[:200]}", ""
+            yield f"转换失败: {resp.text[:200]}", "", render_preview("")
             return
 
         import yaml as pyyaml
@@ -236,378 +321,226 @@ def do_convert(
         scene_count = len(data.get("scenes", []))
         char_count = len(data.get("characters", []))
 
-        yield f"转换完成：{scene_count} 个场景，{char_count} 个角色", yaml_text
+        progress(1.0, desc="✅ 完成")
+        yield f"转换完成：{scene_count} 个场景，{char_count} 个角色", yaml_text, render_preview(yaml_text)
 
     except Exception as e:
-        yield f"请求失败: {str(e)}", ""
+        yield f"请求失败: {str(e)}", "", render_preview("")
 
+# ── Validation & Export ─────────────────────────────────────────
 
 def validate_yaml(yaml_text):
-    """Validate YAML syntax."""
-    import yaml
     if not yaml_text.strip():
-        return "YAML 内容为空", gr.update()
-    try:
-        data = yaml.safe_load(yaml_text)
-        scene_count = len(data.get("scenes", []))
-        char_count = len(data.get("characters", []))
-        return f"YAML 格式正确 — {scene_count} 个场景，{char_count} 个角色", gr.update()
-    except yaml.YAMLError as e:
-        return f"YAML 解析错误: {str(e)[:100]}", gr.update()
-
-
-def export_yaml(yaml_text, title):
-    """Export YAML as downloadable file."""
-    fname = f"script_{title or 'novel'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
-    return gr.update(value=yaml_text, filename=fname)
-
-
-def export_screenplay(yaml_text):
-    """Export YAML as formatted TXT screenplay."""
+        return "YAML 内容为空"
     try:
         import yaml
         data = yaml.safe_load(yaml_text)
-        lines = []
-
-        script = data.get("script", {})
-        lines.append("=" * 60)
-        lines.append(f"标题：{script.get('title', '未命名')}")
-        lines.append(f"作者：{script.get('author', '未知')}")
-        lines.append(f"类型：{script.get('genre', '剧情')}")
-        lines.append(f"一句话简介：{script.get('logline', '')}")
-        lines.append("=" * 60)
-        lines.append("")
-
-        lines.append("【角色表】")
-        for char in data.get("characters", []):
-            role_map = {"protagonist": "主角", "antagonist": "反派",
-                        "supporting": "配角", "minor": "次要", "narrator": "旁白"}
-            role = role_map.get(char.get("role", ""), char.get("role", ""))
-            lines.append(f"  {char.get('name', char.get('id', ''))}（{role}）")
-        lines.append("")
-
-        char_map = {c.get("id", ""): c.get("name", "") for c in data.get("characters", [])}
-
-        for scene in data.get("scenes", []):
-            lines.append("")
-            loc_type = "内" if scene.get("location_type") == "int" else "外"
-            lines.append(f"─── 场景 {scene.get('id', '?')} ───")
-            lines.append(f"[{loc_type}景] {scene.get('location', '')} - {scene.get('time', '')}")
-            if scene.get("weather"):
-                lines.append(f"天气：{scene.get('weather')}")
-            char_names = [char_map.get(c, c) for c in scene.get("characters", [])]
-            lines.append(f"出场：{', '.join(char_names)}")
-            lines.append(f"概要：{scene.get('summary', '')}")
-            lines.append("")
-
-            for elem in scene.get("elements", []):
-                etype = elem.get("type", "")
-                content = elem.get("content", "")
-
-                if etype == "transition":
-                    lines.append(f"\n  >> {content}")
-                elif etype == "dialogue":
-                    char_id = elem.get("character", "")
-                    paren = elem.get("parenthetical", "")
-                    char_name = char_map.get(char_id, char_id)
-                    prefix = f"（{paren}）" if paren else ""
-                    lines.append(f"\n  {char_name}{prefix}")
-                    lines.append(f"    {content}")
-                elif etype == "camera":
-                    lines.append(f"  [镜头] {content}")
-                elif etype == "narrative":
-                    lines.append(f"  （旁白）{content}")
-                elif etype == "action":
-                    lines.append(f"  （动作）{content}")
-
-        return "\n".join(lines)
+        sc = len(data.get("scenes",[]))
+        cc = len(data.get("characters",[]))
+        return f"✅ YAML 格式正确 — {sc} 个场景，{cc} 个角色"
     except Exception as e:
-        return f"导出失败: {str(e)}"
+        return f"❌ YAML 解析错误: {str(e)[:100]}"
 
+def do_export(yaml_text, fmt):
+    if not yaml_text.strip():
+        return gr.update(visible=False), gr.update(visible=False)
+    try:
+        fname = f"screenplay_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if fmt == "yaml":
+            return gr.update(value=yaml_text, visible=True), gr.update(visible=False)
+        elif fmt == "txt":
+            import requests
+            r = requests.post(f"{API_BASE}/export/txt?yaml_text={requests.utils.quote(yaml_text)}", timeout=10)
+            if r.status_code == 200:
+                content = r.json().get("content", yaml_text)
+                return gr.update(visible=False), gr.update(value=content, visible=True)
+        elif fmt in ("fountain", "json"):
+            import requests
+            r = requests.post(f"{API_BASE}/export/{fmt}?yaml_text={requests.utils.quote(yaml_text)}", timeout=10)
+            if r.status_code == 200:
+                content = r.json().get("content", yaml_text)
+                ext = r.json().get("ext", f".{fmt}")
+                return gr.update(value=content, visible=True), gr.update(visible=False)
+    except Exception as e:
+        pass
+    return gr.update(visible=False), gr.update(visible=False)
 
-def on_provider_change(provider):
-    """Update model choices based on provider."""
-    if provider == "xfyun":
-        return gr.update(choices=XF_MODELS, value="xsparkx2flash", visible=True)
-    elif provider == "openai":
-        return gr.update(choices=OPENAI_MODELS, value="gpt-4o-mini", visible=True)
-    elif provider == "ollama":
-        models = [(m, m) for m in state.ollama_models] if state.ollama_models else OLLAMA_MODELS_DEFAULT
-        return gr.update(choices=models, value=models[0][1] if models else "qwen2.5", visible=True)
-    elif provider == "gemini":
-        return gr.update(choices=GEMINI_MODELS, value="gemini-1.5-flash", visible=True)
-    return gr.update()
-
-
-def on_tab_change(tab):
-    """Initialize on tab change."""
-    if tab == 0:
-        health = check_api()
-        if health.get("status") == "ok":
-            if not state.ollama_connected:
-                fetch_ollama_models()
-        return health.get("status", "offline"), state.ollama_connected
-    return "offline", False
-
-
-# ── Build UI ─────────────────────────────────────────────────────
+# ── Build UI ────────────────────────────────────────────────────
 
 def build_ui():
-    with gr.Blocks(title="Novel2Script · AI 小说转剧本") as demo:
+    css = """
+    .gradio-container { max-width: 1500px !important; }
+    #yaml-editor textarea { font-family: 'JetBrains Mono','Fira Code',monospace !important; font-size: 12px !important; }
+    .preview-scroll { max-height: 75vh; overflow-y: auto; }
+    """
 
-        gr.HTML(APP_TITLE)
+    with gr.Blocks(title="Novel2Script · AI 小说转剧本", css=css) as demo:
+
+        # Header
+        gr.HTML("""
+        <div style='text-align:center;padding:16px 0'>
+        <h1 style='margin:0;font-size:28px'>Novel2Script · AI 小说转剧本</h1>
+        <p style='color:#64748b;margin:4px 0 0 0'>将小说文本智能转换为结构化剧本 YAML</p>
+        </div>
+        """)
 
         with gr.Row():
-            api_status = gr.HTML("<span style='color:#888'>正在检查后端连接...</span>")
+            api_status = gr.HTML("<span style='color:#888;font-size:13px'>检查后端连接...</span>")
 
         demo.load(
-            fn=lambda: (
-                "后端已连接" if check_api().get("status") == "ok" else "后端未连接",
-            ),
-            inputs=[],
+            fn=lambda: "🟢 后端已连接" if check_api().get("status")=="ok" else "🔴 后端未连接",
             outputs=[api_status],
         )
 
         with gr.Tabs():
-            with gr.Tab("小说转剧本"):
-                gr.HTML("<p style='color:var(--text-color-subdued);font-size:14px'>上传小说文本，AI 将自动分析场景、提取对话、构建角色图谱，生成结构化剧本 YAML</p>")
-
+            # ═══ Tab 1: Convert ═══
+            with gr.Tab("📖 小说转剧本"):
                 with gr.Row(equal_height=False):
-                    with gr.Column(scale=1, min_width=360):
-                        gr.HTML("<b>输入方式</b>")
-                        input_method = gr.Radio(["text", "file"], value="text", label="选择输入")
+                    # Left panel
+                    with gr.Column(scale=1, min_width=340):
+                        gr.HTML("<h3 style='margin:8px 0'>📁 输入</h3>")
+                        input_method = gr.Radio(["text","file"], value="text", label="输入方式")
 
                         with gr.Group(visible=True) as text_group:
-                            text_input = gr.Textbox(label="小说文本", placeholder="在此粘贴小说章节内容（至少包含 3 个章节）...", lines=12)
-
+                            text_input = gr.Textbox(
+                                label="小说文本",
+                                placeholder="在此粘贴小说章节内容（至少 3 章，建议 1000+ 字）...",
+                                lines=11,
+                            )
                         with gr.Group(visible=False) as file_group:
-                            file_input = gr.File(label="上传文件", file_types=[".txt", ".docx", ".pdf"])
+                            file_input = gr.File(label="上传文件", file_types=[".txt",".docx",".pdf"])
 
                         input_method.change(
-                            fn=lambda m: (gr.update(visible=m == "text"), gr.update(visible=m == "file")),
-                            inputs=[input_method], outputs=[text_group, file_group],
+                            lambda m: (gr.update(visible=m=="text"), gr.update(visible=m=="file")),
+                            [input_method], [text_group, file_group],
                         )
 
-                        gr.HTML("<b>剧本信息</b>")
-                        title_input = gr.Textbox(label="剧本标题", placeholder="自动从文本中提取，也可手动填写", lines=1)
+                        gr.HTML("<h3 style='margin:12px 0 8px 0'>📝 剧本信息</h3>")
+                        title_input = gr.Textbox(label="剧本标题", placeholder="自动提取或手动填写", lines=1)
                         author_input = gr.Textbox(label="原作者", placeholder="作者名称", lines=1)
 
-                        gr.HTML("<b>AI 配置</b>")
-
-                        provider = gr.Radio(
-                            ["xfyun", "openai", "ollama", "gemini"], value="xfyun",
-                            label="AI 提供商", info="讯飞 MaaS Coding / OpenAI / Ollama / Gemini",
-                        )
+                        gr.HTML("<h3 style='margin:12px 0 8px 0'>🤖 AI 配置</h3>")
+                        provider = gr.Radio(["xfyun","openai","ollama","gemini"], value="xfyun", label="AI 提供商")
 
                         with gr.Group(visible=True) as xfyun_group:
                             xfyun_model = gr.Dropdown(
-                                choices=[v for k, v in XF_MODELS], value="xsparkx2flash",
+                                choices=[v for _,v in XF_MODELS], value="xsparkx2flash",
                                 label="模型", allow_custom_value=True,
-                                info="讯飞 MaaS Coding API",
                             )
-
                         with gr.Group(visible=False) as openai_group:
-                            openai_api_key = gr.Textbox(label="OpenAI API Key", placeholder="sk-...", type="password", lines=1)
-                            openai_model = gr.Dropdown(
-                                choices=[v for k, v in OPENAI_MODELS], value="gpt-4o-mini",
-                                label="模型", allow_custom_value=True,
-                            )
-
+                            openai_api_key = gr.Textbox(label="API Key", placeholder="sk-...", type="password")
+                            openai_model = gr.Dropdown(choices=[v for _,v in OPENAI_MODELS], value="gpt-4o-mini", label="模型", allow_custom_value=True)
                         with gr.Group(visible=False) as ollama_group:
-                            ollama_base_url = gr.Textbox(label="Ollama 地址", value="http://localhost:11434", lines=1)
-                            ollama_model = gr.Dropdown(
-                                choices=[v for k, v in OLLAMA_MODELS_DEFAULT], value="qwen2.5",
-                                label="模型", allow_custom_value=True,
-                            )
-                            btn_refresh_ollama = gr.Button("检测 Ollama 模型", size="sm", variant="secondary")
-
+                            ollama_base_url = gr.Textbox(label="Ollama 地址", value="http://localhost:11434")
+                            ollama_model = gr.Dropdown(choices=[v for _,v in OLLAMA_MODELS], value="qwen2.5", label="模型", allow_custom_value=True)
+                            btn_refresh = gr.Button("🔄 检测模型", size="sm")
                         with gr.Group(visible=False) as gemini_group:
-                            gemini_api_key = gr.Textbox(label="Gemini API Key", placeholder="AIza...", type="password", lines=1)
-                            gemini_model = gr.Dropdown(
-                                choices=[v for k, v in GEMINI_MODELS], value="gemini-1.5-flash",
-                                label="模型", allow_custom_value=True,
-                            )
+                            gemini_api_key = gr.Textbox(label="API Key", placeholder="AIza...", type="password")
+                            gemini_model = gr.Dropdown(choices=[v for _,v in GEMINI_MODELS], value="gemini-1.5-flash", label="模型", allow_custom_value=True)
 
                         def toggle_provider(p):
-                            return (
-                                gr.update(visible=p == "xfyun"),
-                                gr.update(visible=p == "openai"),
-                                gr.update(visible=p == "ollama"),
-                                gr.update(visible=p == "gemini"),
-                            )
+                            return tuple(gr.update(visible=p==x) for x in ["xfyun","openai","ollama","gemini"])
+                        provider.change(toggle_provider, [provider], [xfyun_group,openai_group,ollama_group,gemini_group])
 
-                        provider.change(fn=toggle_provider, inputs=[provider], outputs=[xfyun_group, openai_group, ollama_group, gemini_group])
-
-                        btn_refresh_ollama.click(
-                            fn=lambda url: (
-                                fetch_ollama_models() or [],
-                                f"已刷新，发现 {len(state.ollama_models)} 个模型" if state.ollama_models else "未发现运行中的模型",
-                            ),
-                            inputs=[ollama_base_url], outputs=[ollama_model, api_status],
+                        btn_refresh.click(
+                            lambda url: (fetch_ollama_models() or [], f"发现 {len(state.ollama_models)} 个模型" if state.ollama_models else "未发现模型"),
+                            [ollama_base_url], [ollama_model, api_status],
                         )
 
-                        def on_xfyun_model_change(provider_val):
-                            if provider_val == "xfyun":
-                                return gr.update(choices=XF_MODELS, value="xsparkx2flash", visible=True)
-                            return gr.update()
-                        provider.change(fn=on_xfyun_model_change, inputs=[provider], outputs=[xfyun_model])
+                        gr.HTML("<h3 style='margin:12px 0 8px 0'>🎨 剧本风格</h3>")
+                        style_input = gr.Dropdown(choices=[(k,v) for k,_,v in [(a,b,c) for a,b,c in [(x[0],None,x[1]) for x in STYLE_CHOICES]]], value="cinematic", label="风格预设")
 
                         with gr.Row():
-                            temperature = gr.Slider(minimum=0.0, maximum=2.0, value=0.7, step=0.1, label="Temperature")
-                            max_tokens = gr.Slider(minimum=512, maximum=32768, value=8192, step=256, label="Max Tokens")
+                            temperature = gr.Slider(0.0, 2.0, 0.7, step=0.1, label="创意度")
+                            max_tokens = gr.Slider(512, 32768, 8192, step=256, label="最大长度")
 
-                        gr.HTML("<b>输出选项</b>")
-                        with gr.Row():
-                            add_camera = gr.Checkbox(value=True, label="添加镜头建议")
-                            add_transitions = gr.Checkbox(value=True, label="添加转场")
-                            preserve_narrative = gr.Checkbox(value=True, label="保留旁白")
+                        btn_convert = gr.Button("🚀 开始转换", variant="primary", size="lg")
 
+                        status_output = gr.Textbox(label="处理状态", lines=3, interactive=False)
+
+                    # Right panel: dual pane
                     with gr.Column(scale=2, min_width=500):
-                        btn_convert = gr.Button("开始转换", variant="primary", size="lg")
-
-                        status_output = gr.Textbox(label="处理状态", lines=4, interactive=False)
-                        yaml_editor = gr.Code(label="剧本 YAML（可编辑）", language="yaml", lines=25)
+                        with gr.Tabs():
+                            with gr.Tab("📄 YAML 源码"):
+                                yaml_editor = gr.Code(label="剧本 YAML（可编辑）", language="yaml", lines=30, elem_id="yaml-editor")
+                            with gr.Tab("👁 可视化预览"):
+                                preview_output = gr.HTML(
+                                    "<div style='color:#888;padding:3rem;text-align:center;font-size:15px'>"
+                                    "📖 点击「开始转换」后，这里将实时展示剧本结构预览<br>"
+                                    "<span style='font-size:13px'>包括角色卡片、场景列表、幕结构统计</span></div>",
+                                    elem_classes=["preview-scroll"],
+                                )
 
                         with gr.Row():
-                            btn_validate = gr.Button("验证 YAML", variant="secondary")
-                            validation_result = gr.HTML("<span style='color:#888'>点击 验证 YAML 检查格式</span>")
+                            btn_validate = gr.Button("✅ 验证 YAML", variant="secondary", size="sm")
+                            validation_result = gr.HTML("<span style='color:#888;font-size:13px'>点击验证 YAML 格式</span>")
 
-                        btn_validate.click(fn=validate_yaml, inputs=[yaml_editor], outputs=[validation_result])
+                        btn_validate.click(validate_yaml, [yaml_editor], [validation_result])
 
-                        with gr.Accordion("导出选项", open=False):
+                        with gr.Accordion("📥 多格式导出", open=False):
                             with gr.Row():
-                                btn_export_yaml = gr.Button("下载 YAML 文件", variant="primary")
-                                btn_export_txt = gr.Button("导出为 TXT 剧本", variant="secondary")
+                                export_fmt = gr.Dropdown(
+                                    choices=[(k,v) for k,_,v in [(x[0],None,x[1]) for x in EXPORT_FORMATS]],
+                                    value="yaml", label="导出格式",
+                                )
+                                btn_export = gr.Button("💾 导出", variant="primary", size="sm")
 
-                            export_yaml_file = gr.File(label="YAML 下载", visible=False)
-                            export_txt_file = gr.Textbox(label="TXT 剧本预览", lines=15)
+                            export_file = gr.File(label="YAML 下载", visible=False)
+                            export_preview = gr.Textbox(label="导出内容预览", lines=12, visible=False)
 
-                            btn_export_yaml.click(fn=export_yaml, inputs=[yaml_editor, title_input], outputs=[export_yaml_file])
-                            btn_export_txt.click(fn=export_screenplay, inputs=[yaml_editor], outputs=[export_txt_file])
+                            btn_export.click(do_export, [yaml_editor, export_fmt], [export_file, export_preview])
 
-                btn_convert.click(
-                    fn=do_convert,
-                    inputs=[
-                        input_method, text_input, file_input, title_input, author_input,
-                        provider, xfyun_model,
-                        openai_api_key, openai_model,
-                        ollama_model, ollama_base_url,
-                        gemini_api_key, gemini_model,
-                        temperature, max_tokens,
-                        add_camera, add_transitions, preserve_narrative,
-                    ],
-                    outputs=[status_output, yaml_editor],
-                )
+                # Wire convert
+                inputs_list = [
+                    input_method, text_input, file_input, title_input, author_input,
+                    provider, xfyun_model, openai_api_key, openai_model,
+                    ollama_model, ollama_base_url, gemini_api_key, gemini_model,
+                    temperature, max_tokens, style_input,
+                ]
+                btn_convert.click(do_convert, inputs=inputs_list, outputs=[status_output, yaml_editor, preview_output])
 
-            with gr.Tab("YAML Schema 参考"):
+            # ═══ Tab 2: Schema ═══
+            with gr.Tab("📋 Schema 参考"):
                 gr.HTML("""
-                <div style="padding: 16px; line-height: 1.8; font-size: 14px;">
-                <h2>Novel2Script YAML Schema 参考</h2>
-                <p style="color: var(--text-color-subdued);">完整 Schema 定义请参阅项目根目录的 <code>YAML_SCHEMA.md</code> 文件。</p>
-
-                <h3>核心结构（5 个顶层键）</h3>
-                <pre style="background: var(--background-fill-secondary); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px;">
-script:        # 脚本基本元信息（必填）
-metadata:      # 制作级元数据（必填）
-characters:    # 角色列表（必填，>=1 个）
-act_structure: # 幕结构定义（必填，3 个 act）
-scenes:        # 场景列表（必填，>=1 个）
-                </pre>
-
-                <h3>characters — 角色定义</h3>
-                <pre style="background: var(--background-fill-secondary); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px;">
-- id: "char_001"              # 全局唯一 ID
-  name: "角色名"               # 角色名
-  role: "protagonist"          # protagonist | antagonist | supporting | minor | narrator
-  description: "角色描述..."     # >=10 字符
-  voice: "语音特征"             # 可选
-  first_appearance: 1          # 首次出场场景编号
-  relationships:               # 可选
-    - target: "char_002"
-      type: "family|mentor|friend|enemy|romantic|partner"
-      description: "关系描述"
-                </pre>
-
-                <h3>scenes — 场景元素类型</h3>
-                <table style="width:100%; border-collapse: collapse; font-size: 13px;">
-                <tr style="background: var(--background-fill-secondary);">
-                    <th style="padding:8px;border:1px solid var(--border-color)">type</th>
-                    <th style="padding:8px;border:1px solid var(--border-color)">必填字段</th>
-                    <th style="padding:8px;border:1px solid var(--border-color)">说明</th>
-                </tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">dialogue</td><td style="padding:8px;border:1px solid var(--border-color)">character, content</td><td style="padding:8px;border:1px solid var(--border-color)">角色对话</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">action</td><td style="padding:8px;border:1px solid var(--border-color)">content</td><td style="padding:8px;border:1px solid var(--border-color)">动作描述</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">narrative</td><td style="padding:8px;border:1px solid var(--border-color)">content</td><td style="padding:8px;border:1px solid var(--border-color)">旁白/叙述</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">transition</td><td style="padding:8px;border:1px solid var(--border-color)">content</td><td style="padding:8px;border:1px solid var(--border-color)">转场指令（淡入/淡出）</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">camera</td><td style="padding:8px;border:1px solid var(--border-color)">content</td><td style="padding:8px;border:1px solid var(--border-color)">镜头建议</td></tr>
+                <div style='padding:16px;line-height:1.8;font-size:14px'>
+                <h2>Novel2Script YAML Schema</h2>
+                <p>完整文档见 <code>YAML_SCHEMA.md</code></p>
+                <h3>5 个顶层键</h3>
+                <pre style='background:#f8fafc;padding:12px;border-radius:8px'>
+script:        # 基本元信息
+metadata:      # 制作元数据
+characters:    # 角色列表 (>=1)
+act_structure: # 幕结构 (3 acts)
+scenes:        # 场景列表 (>=1)</pre>
+                <h3>元素类型</h3>
+                <table style='width:100%;border-collapse:collapse;font-size:13px'>
+                <tr style='background:#f1f5f9'><th style='padding:6px'>type</th><th>必填字段</th><th>说明</th></tr>
+                <tr><td style='padding:4px'>dialogue</td><td>character, content</td><td>角色对话</td></tr>
+                <tr><td style='padding:4px'>action</td><td>content</td><td>动作描述</td></tr>
+                <tr><td style='padding:4px'>narrative</td><td>content</td><td>旁白/叙述</td></tr>
+                <tr><td style='padding:4px'>transition</td><td>content</td><td>转场指令</td></tr>
+                <tr><td style='padding:4px'>camera</td><td>content</td><td>镜头建议</td></tr>
                 </table>
+                </div>""")
 
-                <h3>设计亮点</h3>
-                <ul>
-                <li><b>全局角色表 + ID 引用</b>：角色在 <code>characters</code> 中定义一次，场景中通过 <code>char_XXX</code> ID 引用，避免名字不一致问题</li>
-                <li><b>固定三幕制</b>：幕结构（Setup / Confrontation / Resolution）是剧本写作的事实标准</li>
-                <li><b>扁平化 elements 列表</b>：对话、动作、旁白交替出现，保留剧本的节奏感</li>
-                <li><b>镜头语言扩展</b>：camera 类型提供可选的镜头建议，不影响导演的创作自由</li>
-                <li><b>可扩展字段</b>：以 <code>x_</code> 前缀添加自定义字段（导演注释、拍摄备注等）</li>
-                </ul>
-                </div>
-                """)
-
-            with gr.Tab("使用说明"):
+            # ═══ Tab 3: Help ═══
+            with gr.Tab("❓ 使用说明"):
                 gr.HTML("""
-                <div style="padding: 16px; line-height: 1.8; font-size: 14px;">
-                <h2>使用说明</h2>
-
-                <h3>快速开始</h3>
+                <div style='padding:16px;line-height:1.8;font-size:14px'>
+                <h2>快速开始</h2>
                 <ol>
-                <li>在「小说转剧本」标签页，选择输入方式（粘贴文本或上传文件）</li>
-                <li>填写剧本标题和原作者（可选）</li>
-                <li>选择 AI 提供商并配置 API Key</li>
-                <li>调整输出选项，点击「开始转换」</li>
-                <li>等待 AI 生成剧本 YAML，在编辑器中查看和修改</li>
-                <li>导出为 YAML 文件或 TXT 剧本格式</li>
+                <li>粘贴小说文本或上传文件（支持 .txt/.docx/.pdf）</li>
+                <li>选择 AI 提供商和模型（默认讯飞，开箱即用）</li>
+                <li>选择剧本风格预设</li>
+                <li>点击「开始转换」</li>
+                <li>在「YAML 源码」和「可视化预览」之间切换查看结果</li>
+                <li>导出为 YAML / TXT / Fountain / JSON</li>
                 </ol>
-
-                <h3>AI 配置说明</h3>
-                <table style="width:100%; border-collapse: collapse;">
-                <tr style="background: var(--background-fill-secondary);">
-                    <th style="padding:8px;border:1px solid var(--border-color)">提供商</th>
-                    <th style="padding:8px;border:1px solid var(--border-color)">说明</th>
-                    <th style="padding:8px;border:1px solid var(--border-color)">推荐模型</th>
-                </tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">讯飞 MaaS Coding</td><td style="padding:8px;border:1px solid var(--border-color)">内置 API Key，开箱即用</td><td style="padding:8px;border:1px solid var(--border-color)">xsparkx2flash</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">OpenAI</td><td style="padding:8px;border:1px solid var(--border-color)">效果最好，需要 API Key</td><td style="padding:8px;border:1px solid var(--border-color)">gpt-4o-mini</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">Ollama</td><td style="padding:8px;border:1px solid var(--border-color)">本地运行，免费</td><td style="padding:8px;border:1px solid var(--border-color)">qwen2.5</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">Gemini</td><td style="padding:8px;border:1px solid var(--border-color)">Google 多模态模型</td><td style="padding:8px;border:1px solid var(--border-color)">gemini-1.5-flash</td></tr>
-                </table>
-
-                <h3>支持的输入格式</h3>
-                <ul>
-                <li><b>.txt</b>：纯文本文件，自动检测编码（UTF-8/GBK/GB2312）</li>
-                <li><b>.docx</b>：Word 文档，自动提取正文段落</li>
-                <li><b>.pdf</b>：PDF 文档，提取文本内容</li>
-                </ul>
-
-                <h3>注意事项</h3>
-                <ul>
-                <li>小说至少需要包含 3 个章节，否则无法转换</li>
-                <li>文本建议 3000 字以上，章节越多转换效果越好</li>
-                <li>Ollama 需要本地安装并启动（运行 <code>ollama serve</code>）</li>
-                <li>首次转换可能需要几分钟，取决于文本长度和 AI 模型速度</li>
-                </ul>
-                </div>
-                """)
+                </div>""")
 
     return demo
 
 
-# ── Entry Point ─────────────────────────────────────────────────
-
 if __name__ == "__main__":
     demo = build_ui()
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=False,
-        show_error=True,
-    )
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=False, show_error=True)

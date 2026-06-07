@@ -18,6 +18,7 @@ class AIConfig(BaseModel):
 
 class ConvertOptions(BaseModel):
     """Conversion options."""
+    style: Literal["cinematic", "theatrical", "practical", "literary", "teleplay"] = "cinematic"
     add_camera_directions: bool = True
     add_transitions: bool = True
     preserve_narrative: bool = True

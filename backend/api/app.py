@@ -21,6 +21,8 @@ from backend.services.llm_service import (
 )
 from backend.services.file_parser import extract_text
 from backend.services.converter import convert_novel, yaml_to_screenplay
+from backend.services.export_service import export, EXPORT_FORMATS
+import yaml
 
 app = FastAPI(
     title="Novel2Script API",
@@ -162,7 +164,31 @@ async def convert_plain(request: ConvertRequest):
 
 
 @app.post("/export/screenplay")
-async def export_screenplay(yaml_text: str):
+async def export_screenplay_endpoint(yaml_text: str):
     """Convert YAML to human-readable screenplay TXT."""
     result = yaml_to_screenplay(yaml_text)
     return {"screenplay": result}
+
+
+@app.post("/export/{fmt}")
+async def export_format(yaml_text: str, fmt: str):
+    """Export YAML screenplay to various formats.
+
+    Supported formats: yaml, txt, fountain, json
+    """
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(status_code=400, detail=f"不支持的格式: {fmt}，支持: {list(EXPORT_FORMATS.keys())}")
+
+    try:
+        data = yaml.safe_load(yaml_text)
+        if not data:
+            raise HTTPException(status_code=400, detail="无效的 YAML 内容")
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"YAML 解析失败: {str(e)}")
+
+    try:
+        content = export(data, fmt)
+        info = EXPORT_FORMATS[fmt]
+        return {"content": content, "mime": info["mime"], "ext": info["ext"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
