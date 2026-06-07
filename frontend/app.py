@@ -205,85 +205,41 @@ def do_convert(
             yield "请输入 Gemini API Key", ""
             return
 
-    data = {
-        "provider": provider,
-        "api_key": api_key or "",
-        "model": model,
-        "base_url": base_url or "",
-        "temperature": str(temperature),
-        "max_tokens": str(max_tokens),
-        "title": title_input or "",
-        "author": author_input or "",
-        "add_camera_directions": str(add_camera).lower(),
-        "add_transitions": str(add_transitions).lower(),
-        "preserve_narrative": str(preserve_narrative).lower(),
-    }
-
-    if input_method == "text":
-        data["text"] = raw_text
-
-    import asyncio
-
-    async def stream_convert():
-        url = f"{API_BASE}/convert"
-        timeout = httpx.Timeout(600.0, connect=30.0)
-
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                if input_method == "file" and file_input:
-                    if isinstance(file_input, dict):
-                        fpath = file_input.get("path", "")
-                    elif isinstance(file_input, str):
-                        fpath = file_input
-                    else:
-                        fpath = str(file_input)
-                    files = {"file": (os.path.basename(fpath), open(fpath, "rb"), "application/octet-stream")}
-                    resp = await client.post(url, data=data, files=files)
-                else:
-                    resp = await client.post(url, data=data)
-
-                if resp.status_code != 200:
-                    yield f"服务器错误: {resp.status_code}", ""
-                    return
-
-                yaml_chunks = []
-                in_yaml = False
-
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    chunk = line[6:]
-                    if chunk.startswith("[ERROR]"):
-                        yield f"{chunk[7:]}", ""
-                        return
-                    if "---YAML_OUTPUT_START---" in chunk:
-                        in_yaml = True
-                        chunk = chunk.replace("---YAML_OUTPUT_START---", "")
-                        continue
-                    if "---YAML_OUTPUT_END---" in chunk:
-                        in_yaml = False
-                        break
-                    if in_yaml:
-                        yaml_chunks.append(chunk)
-
-            except Exception as e:
-                yield f"连接失败: {str(e)}", "".join(yaml_chunks)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Use /convert/plain - simpler, returns complete YAML
     try:
-        gen = stream_convert()
-        try:
-            while True:
-                try:
-                    status, yaml_out = loop.run_until_complete(gen.__anext__())
-                    yield status, yaml_out
-                except StopAsyncIteration:
-                    break
-        except Exception as e:
-            yield f"处理出错: {str(e)}", ""
-    finally:
-        loop.close()
+        yield "正在转换，请稍候（通常需要 2-5 分钟）...", ""
+        import requests as sync_requests
+
+        resp = sync_requests.post(
+            f"{API_BASE}/convert/plain",
+            json={
+                "text": raw_text,
+                "config": {
+                    "provider": provider,
+                    "model": model,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                "title": title_input or "",
+                "author": author_input or "",
+            },
+            timeout=600,
+        )
+
+        if resp.status_code != 200:
+            yield f"转换失败: {resp.text[:200]}", ""
+            return
+
+        import yaml as pyyaml
+        yaml_text = resp.json().get("yaml", "")
+        data = pyyaml.safe_load(yaml_text)
+        scene_count = len(data.get("scenes", []))
+        char_count = len(data.get("characters", []))
+
+        yield f"转换完成：{scene_count} 个场景，{char_count} 个角色", yaml_text
+
+    except Exception as e:
+        yield f"请求失败: {str(e)}", ""
 
 
 def validate_yaml(yaml_text):
