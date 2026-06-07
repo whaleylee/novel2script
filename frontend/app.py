@@ -238,14 +238,19 @@ def validate_yaml(yt):
 def do_export(yt, fmt):
     if not yt.strip(): return gr.update(visible=False), gr.update(visible=False)
     try:
-        if fmt == "yaml": return gr.update(value=yt, visible=True), gr.update(visible=False)
+        if fmt == "yaml":
+            return gr.update(value=yt, visible=True), gr.update(visible=False)
         import requests
-        r = requests.post(f"{API_BASE}/export/{fmt}?yaml_text={requests.utils.quote(yt)}", timeout=10)
+        # Use params= for query string, not inline in URL
+        r = requests.post(f"{API_BASE}/export/{fmt}", params={"yaml_text": yt}, timeout=30)
         if r.status_code == 200:
             c = r.json().get("content", yt)
             return gr.update(value=c, visible=True), gr.update(visible=False)
-    except Exception: pass
-    return gr.update(visible=False), gr.update(visible=False)
+        else:
+            # Show error if export fails
+            return gr.update(visible=False), gr.update(value=f"Export error: {r.text[:200]}", visible=True)
+    except Exception as e:
+        return gr.update(visible=False), gr.update(value=f"Export failed: {str(e)}", visible=True)
 
 # ── Build UI ────────────────────────────────────────────────────
 
