@@ -208,7 +208,11 @@ def do_convert(
         progress(0.95, desc="正在获取最终结果...")
         resp = sync_requests.post(f"{API_BASE}/convert/plain", json={
             "text": raw_text,
-            "config": {"provider": provider, "model": model, "temperature": temperature, "max_tokens": max_tokens},
+            "config": {
+                "provider": provider, "model": model,
+                "api_key": api_key or "",
+                "temperature": temperature, "max_tokens": max_tokens,
+            },
             "title": title_input or "", "author": author_input or "",
         }, timeout=600)
 
