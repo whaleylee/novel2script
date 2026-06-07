@@ -131,8 +131,8 @@ STYLE_PRESETS = {
     },
 }
 import os
-XF_API_KEY = os.environ.get("XF_API_KEY", "b08f362325862b46490549aa50813eaa:YzYzYmM2YTJhNDJjZjY0YWJhOTc4ZmQ2")
-XF_BASE_URL = "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"
+XF_API_KEY = os.environ.get("XF_API_KEY", "")
+XF_BASE_URL = os.environ.get("XF_BASE_URL", "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2")
 
 XF_MODELS = [
     ("Spark X2 Flash (可用)", "xsparkx2flash"),
