@@ -219,35 +219,6 @@ python run.py --port 8080
 
 ---
 
-## 支持的 AI 模型
-
-### 讯飞 MaaS Coding（推荐）
-
-| 模型 | model_id |
-|------|----------|
-| Spark X2 Flash | xsparkx2flash |
-| Qwen3.5-35B-A3B | xopqwen35v35b |
-| Qwen3.6-35B-A3B | xopqwen36v35b |
-| Qwen3-Coder-Next-FP8 | xop3qwencodernext |
-| GLM-4.7-Flash | xopglmv47flash |
-| Spark X2 | xsparkx2 |
-| GLM-5.1 | xopglm51 |
-| DeepSeek-V4-Pro | xopdeepseekv4pro |
-| DeepSeek-V3.2 | xopdeepseekv32 |
-| Kimi-K2.6 | xopkimik26 |
-| MiniMax-M2.5 | xminimaxm25 |
-| Qwen3.5-397B-A17B | xopqwen35397b |
-
-### 剧本风格预设
-
-| 风格 | style_id | 特点 |
-|------|----------|------|
-| 电影化 | cinematic | 强镜头语言，注重视觉节奏 |
-| 舞台戏剧 | theatrical | 对话密集，聚焦人物关系 |
-| 可拍摄剧本 | practical | 口语化台词，便于低成本制作 |
-| 文学剧本 | literary | 保留诗意，适合艺术片 |
-| 电视剧节奏 | teleplay | 快节奏短场景，每场留悬念 |
-
 ---
 
 ## 原创功能
