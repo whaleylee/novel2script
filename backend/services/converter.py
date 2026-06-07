@@ -160,11 +160,10 @@ async def convert_novel(
     request: ConvertRequest,
 ) -> AsyncIterator[str]:
     """
-    Main conversion pipeline:
-    1. Parse text into chapters
-    2. Global analysis → characters + act structure
-    3. Per-chapter analysis → scenes
-    4. Merge and yield final YAML
+    Optimized single-pass conversion pipeline:
+    1. Detect chapters
+    2. Single LLM call per chapter (skip redundant summary + global passes)
+    3. Merge results
     """
     text = request.text.strip()
     options = request.options
@@ -178,67 +177,18 @@ async def convert_novel(
     if chapter_count < 3:
         raise ValueError(f"章节数不足：检测到 {chapter_count} 个章节，需要至少 3 个章节")
 
-    # Step 2: Quick text analysis
+    # Step 2: Quick analysis
     analysis = analyze_text(text)
-    yield f"[STEP_2] 字数：{analysis['word_count']:,} 字，潜在角色：{len(analysis['potential_characters'])} 个\n"
+    yield f"[STEP_2] 字数：{analysis['word_count']:,} 字\n"
 
-    # Step 3: Global analysis
-    yield "[STEP_3] 正在分析全局结构（角色、幕结构）...\n"
-
-    # First pass: summarize each chapter
-    chapter_summaries = []
-    for i, (title, content) in enumerate(chapters):
-        yield f"[STEP_3] 正在摘要章节 {i + 1}/{chapter_count}: {title}\n"
-        messages = build_chapter_prompt(title, content[:3000], options)
-        try:
-            summary_text = await llm_service.achat(messages, config)
-            # Try to extract just the YAML summary
-            if "---" in summary_text or "scenes:" in summary_text.lower() or "yaml" in summary_text.lower():
-                try:
-                    parsed = parse_yaml_chunk(summary_text)
-                    if parsed and isinstance(parsed, dict):
-                        summary_text = parsed.get("scenes", [{}])[0].get("summary", summary_text[:200]) if parsed.get("scenes") else summary_text[:200]
-                except Exception:
-                    pass
-        except Exception as e:
-            summary_text = content[:300]
-        chapter_summaries.append({"title": title, "summary": summary_text[:500]})
-
-    # Step 4: Global analysis for characters + act structure
-    yield "[STEP_3] 正在构建角色图谱和幕结构...\n"
-    global_messages = build_summary_prompt(chapter_summaries, options)
-    try:
-        global_yaml_raw = await llm_service.achat(global_messages, config)
-        global_data = parse_yaml_chunk(global_yaml_raw)
-    except Exception as e:
-        global_data = {
-            "script": {
-                "title": request.title or "未命名剧本",
-                "author": request.author or "未知作者",
-                "genre": "drama",
-                "logline": "故事改编中...",
-            },
-            "metadata": {
-                "total_scenes": chapter_count * 3,
-                "total_characters": 3,
-                "total_acts": 3,
-                "estimated_duration": f"{chapter_count * 15}分钟",
-                "generated_by": config.model,
-                "generated_at": str(date.today()),
-            },
-            "characters": [],
-            "act_structure": [],
-            "scenes": [],
-        }
-
-    # Step 5: Per-chapter scene generation
-    yield "[STEP_4] 正在逐章生成场景...\n"
+    # Step 3: Direct per-chapter scene generation (skip summary + global passes)
+    yield "[STEP_3] 正在逐章生成场景...\n"
     all_scenes = []
-    character_map = {c["id"]: c for c in (global_data or {}).get("characters", [])}
+    character_map = {}
 
     for i, (title, content) in enumerate(chapters):
         yield f"[STEP_4] 正在生成第 {i + 1}/{chapter_count} 章的场景...\n"
-        messages = build_chapter_prompt(title, content, options, list(character_map.values()))
+        messages = build_chapter_prompt(title, content, options, list(character_map.values())[:10])
         try:
             chapter_yaml_raw = await llm_service.achat(messages, config)
             chapter_data = parse_yaml_chunk(chapter_yaml_raw)
@@ -246,28 +196,19 @@ async def convert_novel(
                 scenes = chapter_data.get("scenes", [])
                 for scene in scenes:
                     scene["id"] = len(all_scenes) + 1
-                    # Determine act by position
-                    scene_count = max(1, chapter_count * 3)
-                    act_idx = int((len(all_scenes) / scene_count) * 3) + 1
-                    scene["act"] = min(act_idx, 3)
+                    scene["act"] = min(int((len(all_scenes) / max(1, chapter_count * 3)) * 3) + 1, 3)
                     all_scenes.append(scene)
                 if len(all_scenes) > 100:
                     break
-
-                # Accumulate new characters
                 for char in chapter_data.get("characters", []):
                     if char.get("id") and char["id"] not in character_map:
                         character_map[char["id"]] = char
         except Exception as e:
-            # Create a basic scene for this chapter on error
             all_scenes.append({
                 "id": len(all_scenes) + 1,
                 "act": min((i // max(1, chapter_count // 3)) + 1, 3),
-                "location": "场景",
-                "time": "时间",
-                "location_type": "int",
-                "characters": [],
-                "summary": title,
+                "location": "场景", "time": "时间", "location_type": "int",
+                "characters": [], "summary": title,
                 "elements": [
                     {"type": "transition", "content": "淡入"},
                     {"type": "narrative", "content": f"场景：{title}"},
@@ -275,56 +216,31 @@ async def convert_novel(
                 ],
             })
 
-    # Step 6: Build final YAML
+    # Step 4: Build final YAML
+    yield "[STEP_5] 正在格式化输出...\n"
     characters_list = list(character_map.values())
     total_scenes = len(all_scenes) or (chapter_count * 3)
 
-    # Recompute act structure
-    act1_scenes = [s["id"] for s in all_scenes if s.get("act") == 1]
-    act2_scenes = [s["id"] for s in all_scenes if s.get("act") == 2]
-    act3_scenes = [s["id"] for s in all_scenes if s.get("act") == 3]
-
-    # Fallback: distribute evenly
-    if not act2_scenes and not act3_scenes:
-        per_act = max(1, total_scenes // 3)
-        act1_scenes = list(range(1, per_act + 1))
-        act2_scenes = list(range(per_act + 1, per_act * 2 + 1))
-        act3_scenes = list(range(per_act * 2 + 1, total_scenes + 1))
+    # Distribute scenes across acts
+    per_act = max(1, total_scenes // 3)
+    act1_scenes = list(range(1, per_act + 1))
+    act2_scenes = list(range(per_act + 1, per_act * 2 + 1))
+    act3_scenes = list(range(per_act * 2 + 1, total_scenes + 1))
 
     act_structure = [
-        {
-            "act": 1,
-            "title": "第一幕：起因",
-            "description": "建立世界，引入冲突",
-            "scenes": act1_scenes,
-        },
-        {
-            "act": 2,
-            "title": "第二幕：对抗",
-            "description": "冲突升级，挫折阻碍",
-            "scenes": act2_scenes,
-        },
-        {
-            "act": 3,
-            "title": "第三幕：解决",
-            "description": "高潮对决，结局收束",
-            "scenes": act3_scenes,
-        },
+        {"act": 1, "title": "第一幕：起因", "description": "建立世界，引入冲突", "scenes": act1_scenes},
+        {"act": 2, "title": "第二幕：对抗", "description": "冲突升级，挫折阻碍", "scenes": act2_scenes},
+        {"act": 3, "title": "第三幕：解决", "description": "高潮对决，结局收束", "scenes": act3_scenes},
     ]
 
-    # Build script metadata
-    if "script" not in global_data or not global_data["script"].get("title"):
-        global_data.setdefault("script", {})["title"] = request.title or "小说改编剧本"
-    if "script" not in global_data or not global_data["script"].get("author"):
-        global_data.setdefault("script", {})["author"] = request.author or "未知"
-
     final_data = {
-        "script": global_data.get("script", {
+        "script": {
             "title": request.title or "小说改编剧本",
             "author": request.author or "未知",
             "genre": "drama",
             "logline": "故事改编中...",
-        }),
+            "original_source": "小说",
+        },
         "metadata": {
             "total_scenes": total_scenes,
             "total_characters": len(characters_list),
@@ -335,12 +251,10 @@ async def convert_novel(
             "generated_at": str(date.today()),
             "version": "1.0",
         },
-        "characters": characters_list[:20],  # Cap at 20
+        "characters": characters_list[:20],
         "act_structure": act_structure,
-        "scenes": all_scenes[:100],  # Cap at 100 scenes
+        "scenes": all_scenes[:100],
     }
-
-    yield "\n[STEP_5] 生成完成！正在格式化输出...\n"
 
     final_yaml = yaml_to_string(final_data)
     yield "---YAML_OUTPUT_START---\n"
