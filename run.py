@@ -37,13 +37,21 @@ def run_frontend():
     """Start Gradio frontend."""
     print(f"\n[Frontend] Starting Gradio on http://localhost:{FRONTEND_PORT}")
     from frontend.app import build_ui
+    import asyncio
 
     demo = build_ui()
+    # Fix: ensure queue locks exist (gradio 4.44.1 anyio compat)
+    if demo._queue is not None:
+        if demo._queue.pending_message_lock is None:
+            demo._queue.pending_message_lock = asyncio.Lock()
+        if demo._queue.delete_lock is None:
+            demo._queue.delete_lock = asyncio.Lock()
     demo.launch(
         server_name="0.0.0.0",
         server_port=FRONTEND_PORT,
         share=False,
         show_error=True,
+        inbrowser=True,
     )
 
 
