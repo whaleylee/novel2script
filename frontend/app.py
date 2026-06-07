@@ -9,7 +9,6 @@ import threading
 import time
 import httpx
 import gradio as gr
-from gradio import components as gc
 from datetime import datetime
 
 # ── Theme & Constants ──────────────────────────────────────────
@@ -18,8 +17,15 @@ THEME = gr.themes.Soft(
     primary_hue="indigo",
     secondary_hue="slate",
     neutral_hue="slate",
-    font=["Inter", "system-ui", "sans-serif"],
 )
+
+CSS = """
+#app-header { text-align: center; padding: 1rem 0; }
+.gradio-container { max-width: 1400px !important; }
+#yaml-editor textarea { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; font-size: 13px !important; }
+.status-bar { padding: 8px 16px; border-radius: 8px; font-size: 13px; }
+.panel-section { padding: 16px; border-radius: 12px; background: var(--background-fill-secondary); }
+"""
 
 APP_TITLE = """
 # Novel2Script · AI 小说转剧本
@@ -147,39 +153,34 @@ def do_convert(
     preserve_narrative,
     progress_callback=None,
 ):
-    """
-    Main conversion function — runs in a thread to keep UI responsive.
-    Yields status messages via progress_callback.
-    """
+    """Main conversion function."""
     import io
 
-    # Resolve input text
     if input_method == "text":
         raw_text = text_input.strip()
     elif input_method == "file":
         if file_input is None:
-            yield "❌ 请上传文件", ""
+            yield "请上传文件", ""
             return
-        # file_input is a Gradio FileData dict or temp file path
         if isinstance(file_input, dict):
             file_path = file_input.get("path", "")
+        elif isinstance(file_input, str):
+            file_path = file_input
         else:
             file_path = str(file_input)
         try:
             with open(file_path, "rb") as f:
                 file_content = f.read()
         except Exception:
-            # Try as bytes
             file_content = file_input
         raw_text = file_content.decode("utf-8", errors="replace")
     else:
         raw_text = text_input.strip() if text_input else ""
 
     if len(raw_text) < 500:
-        yield "❌ 文本内容过短（至少需要 500 字符）", ""
+        yield "文本内容过短（至少需要 500 字符）", ""
         return
 
-    # Resolve provider config
     api_key = None
     model = "xsparkx2flash"
     base_url = None
@@ -190,27 +191,25 @@ def do_convert(
         api_key = openai_api_key or os.environ.get("OPENAI_API_KEY", "")
         model = openai_model
         if not api_key:
-            yield "❌ 请输入 OpenAI API Key", ""
+            yield "请输入 OpenAI API Key", ""
             return
     elif provider == "ollama":
         model = ollama_model or "qwen2.5"
         base_url = ollama_base_url or "http://localhost:11434"
         if not state.ollama_connected:
-            yield "⚠️ 未检测到 Ollama，请确保 Ollama 服务已启动", ""
+            yield "未检测到 Ollama，请确保 Ollama 服务已启动", ""
     elif provider == "gemini":
         api_key = gemini_api_key or os.environ.get("GEMINI_API_KEY", "")
         model = gemini_model
         if not api_key:
-            yield "❌ 请输入 Gemini API Key", ""
+            yield "请输入 Gemini API Key", ""
             return
 
-    # Build form data
-    files = {}
     data = {
         "provider": provider,
-        "api_key": api_key,
+        "api_key": api_key or "",
         "model": model,
-        "base_url": base_url,
+        "base_url": base_url or "",
         "temperature": str(temperature),
         "max_tokens": str(max_tokens),
         "title": title_input or "",
@@ -223,7 +222,6 @@ def do_convert(
     if input_method == "text":
         data["text"] = raw_text
 
-    # Use plain endpoint for simpler streaming
     import asyncio
 
     async def stream_convert():
@@ -233,18 +231,21 @@ def do_convert(
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 if input_method == "file" and file_input:
-                    files = {"file": (os.path.basename(file_path if isinstance(file_input, dict) else str(file_input)),
-                                      open(file_path if isinstance(file_input, dict) else str(file_input), "rb"),
-                                      "application/octet-stream")}
+                    if isinstance(file_input, dict):
+                        fpath = file_input.get("path", "")
+                    elif isinstance(file_input, str):
+                        fpath = file_input
+                    else:
+                        fpath = str(file_input)
+                    files = {"file": (os.path.basename(fpath), open(fpath, "rb"), "application/octet-stream")}
                     resp = await client.post(url, data=data, files=files)
                 else:
                     resp = await client.post(url, data=data)
 
                 if resp.status_code != 200:
-                    yield f"❌ 服务器错误: {resp.status_code}", ""
+                    yield f"服务器错误: {resp.status_code}", ""
                     return
 
-                full_text = []
                 yaml_chunks = []
                 in_yaml = False
 
@@ -253,7 +254,7 @@ def do_convert(
                         continue
                     chunk = line[6:].strip()
                     if chunk.startswith("[ERROR]"):
-                        yield f"❌ {chunk[7:]}", ""
+                        yield f"{chunk[7:]}", ""
                         return
                     if "---YAML_OUTPUT_START---" in chunk:
                         in_yaml = True
@@ -268,9 +269,8 @@ def do_convert(
                             yield chunk, "".join(yaml_chunks)
 
             except Exception as e:
-                yield f"❌ 连接失败: {str(e)}", "".join(yaml_chunks)
+                yield f"连接失败: {str(e)}", "".join(yaml_chunks)
 
-    # Run async in thread
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -283,7 +283,7 @@ def do_convert(
                 except StopAsyncIteration:
                     break
         except Exception as e:
-            yield f"❌ 处理出错: {str(e)}", ""
+            yield f"处理出错: {str(e)}", ""
     finally:
         loop.close()
 
@@ -292,19 +292,18 @@ def validate_yaml(yaml_text):
     """Validate YAML syntax."""
     import yaml
     if not yaml_text.strip():
-        return "⚠️ YAML 内容为空", gr.update()
+        return "YAML 内容为空", gr.update()
     try:
         data = yaml.safe_load(yaml_text)
         scene_count = len(data.get("scenes", []))
         char_count = len(data.get("characters", []))
-        return f"✅ YAML 格式正确 — {scene_count} 个场景，{char_count} 个角色", gr.update()
+        return f"YAML 格式正确 — {scene_count} 个场景，{char_count} 个角色", gr.update()
     except yaml.YAMLError as e:
-        return f"❌ YAML 解析错误: {str(e)[:100]}", gr.update()
+        return f"YAML 解析错误: {str(e)[:100]}", gr.update()
 
 
 def export_yaml(yaml_text, title):
     """Export YAML as downloadable file."""
-    import tempfile
     fname = f"script_{title or 'novel'}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.yaml"
     return gr.update(value=yaml_text, filename=fname)
 
@@ -388,7 +387,7 @@ def on_provider_change(provider):
 
 def on_tab_change(tab):
     """Initialize on tab change."""
-    if tab == 0:  # Convert tab
+    if tab == 0:
         health = check_api()
         if health.get("status") == "ok":
             if not state.ollama_connected:
@@ -400,301 +399,143 @@ def on_tab_change(tab):
 # ── Build UI ─────────────────────────────────────────────────────
 
 def build_ui():
-    with gr.Blocks(
-        title="Novel2Script · AI 小说转剧本",
-        theme=THEME,
-        css="""
-        #app-header { text-align: center; padding: 1rem 0; }
-        .gradio-container { max-width: 1400px !important; }
-        #yaml-editor textarea { font-family: 'JetBrains Mono', 'Fira Code', monospace !important; font-size: 13px !important; }
-        .status-bar { padding: 8px 16px; border-radius: 8px; font-size: 13px; }
-        .panel-section { padding: 16px; border-radius: 12px; background: var(--background-fill-secondary); }
-        """
-    ) as demo:
+    with gr.Blocks(title="Novel2Script · AI 小说转剧本") as demo:
 
-        # ── Header ────────────────────────────────────────────
         gr.HTML(APP_TITLE)
 
         with gr.Row():
-            api_status = gr.HTML(
-                "<span style='color:#888'>正在检查后端连接...</span>",
-                label="状态",
-            )
-            gr.HTML(
-                "<span style='color:#888'>⚙️  Powered by LiteLLM</span>",
-                label="引擎",
-            )
+            api_status = gr.HTML("<span style='color:#888'>正在检查后端连接...</span>")
 
-        # Auto-check health on load
         demo.load(
             fn=lambda: (
-                "🟢 后端已连接" if check_api().get("status") == "ok" else "🔴 后端未连接",
-                state.ollama_connected,
+                "后端已连接" if check_api().get("status") == "ok" else "后端未连接",
             ),
             inputs=[],
             outputs=[api_status],
         )
 
         with gr.Tabs():
-            # ── Tab 1: Convert ──────────────────────────────────
-            with gr.Tab("📖 小说转剧本"):
+            with gr.Tab("小说转剧本"):
                 gr.HTML("<p style='color:var(--text-color-subdued);font-size:14px'>上传小说文本，AI 将自动分析场景、提取对话、构建角色图谱，生成结构化剧本 YAML</p>")
 
                 with gr.Row(equal_height=False):
-                    # Left panel: Input
                     with gr.Column(scale=1, min_width=360):
-                        gr.HTML("<div class='panel-section'>")
-
-                        gr.HTML("<b>📁 输入方式</b>")
-                        input_method = gr.Radio(
-                            ["text", "file"],
-                            value="text",
-                            label="选择输入",
-                            info="粘贴文本或上传文件",
-                        )
+                        gr.HTML("<b>输入方式</b>")
+                        input_method = gr.Radio(["text", "file"], value="text", label="选择输入")
 
                         with gr.Group(visible=True) as text_group:
-                            text_input = gr.Textbox(
-                                label="小说文本",
-                                placeholder="在此粘贴小说章节内容（至少包含 3 个章节）...",
-                                lines=12,
-                                show_copy_button=True,
-                            )
+                            text_input = gr.Textbox(label="小说文本", placeholder="在此粘贴小说章节内容（至少包含 3 个章节）...", lines=12)
 
                         with gr.Group(visible=False) as file_group:
-                            file_input = gr.File(
-                                label="上传文件",
-                                file_types=[".txt", ".docx", ".pdf"],
-                            )
+                            file_input = gr.File(label="上传文件", file_types=[".txt", ".docx", ".pdf"])
 
                         input_method.change(
                             fn=lambda m: (gr.update(visible=m == "text"), gr.update(visible=m == "file")),
-                            inputs=[input_method],
-                            outputs=[text_group, file_group],
+                            inputs=[input_method], outputs=[text_group, file_group],
                         )
 
-                        gr.HTML("</div>")
+                        gr.HTML("<b>剧本信息</b>")
+                        title_input = gr.Textbox(label="剧本标题", placeholder="自动从文本中提取，也可手动填写", lines=1)
+                        author_input = gr.Textbox(label="原作者", placeholder="作者名称", lines=1)
 
-                        gr.HTML("<div class='panel-section' style='margin-top:12px'>")
-                        gr.HTML("<b>📝 剧本信息</b>")
-                        title_input = gr.Textbox(
-                            label="剧本标题",
-                            placeholder="自动从文本中提取，也可手动填写",
-                            lines=1,
-                        )
-                        author_input = gr.Textbox(
-                            label="原作者",
-                            placeholder="作者名称",
-                            lines=1,
-                        )
-                        gr.HTML("</div>")
-
-                        gr.HTML("<div class='panel-section' style='margin-top:12px'>")
-                        gr.HTML("<b>⚙️ AI 配置</b>")
+                        gr.HTML("<b>AI 配置</b>")
 
                         provider = gr.Radio(
-                            ["xfyun", "openai", "ollama", "gemini"],
-                            value="xfyun",
-                            label="AI 提供商",
-                            info="讯飞 MaaS Coding / OpenAI / Ollama / Gemini",
+                            ["xfyun", "openai", "ollama", "gemini"], value="xfyun",
+                            label="AI 提供商", info="讯飞 MaaS Coding / OpenAI / Ollama / Gemini",
                         )
 
-                        # Xfyun config
                         with gr.Group(visible=True) as xfyun_group:
                             xfyun_model = gr.Dropdown(
-                                choices=[v for k, v in XF_MODELS],
-                                value="xsparkx2flash",
-                                label="模型",
-                                allow_custom_value=True,
-                                info="讯飞 MaaS Coding API — 设置 XF_API_KEY 环境变量",
+                                choices=[v for k, v in XF_MODELS], value="xsparkx2flash",
+                                label="模型", allow_custom_value=True,
+                                info="讯飞 MaaS Coding API",
                             )
 
-                        # OpenAI config
                         with gr.Group(visible=False) as openai_group:
-                            openai_api_key = gr.Textbox(
-                                label="OpenAI API Key",
-                                placeholder="sk-...",
-                                type="password",
-                                lines=1,
-                            )
+                            openai_api_key = gr.Textbox(label="OpenAI API Key", placeholder="sk-...", type="password", lines=1)
                             openai_model = gr.Dropdown(
-                                choices=[v for k, v in OPENAI_MODELS],
-                                value="gpt-4o-mini",
-                                label="模型",
-                                allow_custom_value=False,
+                                choices=[v for k, v in OPENAI_MODELS], value="gpt-4o-mini",
+                                label="模型", allow_custom_value=True,
                             )
 
-                        # Ollama config
                         with gr.Group(visible=False) as ollama_group:
-                            ollama_base_url = gr.Textbox(
-                                label="Ollama 地址",
-                                value="http://localhost:11434",
-                                lines=1,
-                                info="默认 localhost:11434",
-                            )
+                            ollama_base_url = gr.Textbox(label="Ollama 地址", value="http://localhost:11434", lines=1)
                             ollama_model = gr.Dropdown(
-                                choices=[v for k, v in OLLAMA_MODELS_DEFAULT],
-                                value="qwen2.5",
-                                label="模型",
-                                allow_custom_value=False,
+                                choices=[v for k, v in OLLAMA_MODELS_DEFAULT], value="qwen2.5",
+                                label="模型", allow_custom_value=True,
                             )
-                            btn_refresh_ollama = gr.Button(
-                                "🔄 检测 Ollama 模型",
-                                size="sm",
-                                variant="secondary",
-                            )
+                            btn_refresh_ollama = gr.Button("检测 Ollama 模型", size="sm", variant="secondary")
 
-                        # Gemini config
                         with gr.Group(visible=False) as gemini_group:
-                            gemini_api_key = gr.Textbox(
-                                label="Gemini API Key",
-                                placeholder="AIza...",
-                                type="password",
-                                lines=1,
-                            )
+                            gemini_api_key = gr.Textbox(label="Gemini API Key", placeholder="AIza...", type="password", lines=1)
                             gemini_model = gr.Dropdown(
-                                choices=[v for k, v in GEMINI_MODELS],
-                                value="gemini-1.5-flash",
-                                label="模型",
-                                allow_custom_value=False,
+                                choices=[v for k, v in GEMINI_MODELS], value="gemini-1.5-flash",
+                                label="模型", allow_custom_value=True,
                             )
 
                         def toggle_provider(p):
-                            show_xfyun = p == "xfyun"
-                            show_openai = p == "openai"
-                            show_ollama = p == "ollama"
-                            show_gemini = p == "gemini"
                             return (
-                                gr.update(visible=show_xfyun),
-                                gr.update(visible=show_openai),
-                                gr.update(visible=show_ollama),
-                                gr.update(visible=show_gemini),
+                                gr.update(visible=p == "xfyun"),
+                                gr.update(visible=p == "openai"),
+                                gr.update(visible=p == "ollama"),
+                                gr.update(visible=p == "gemini"),
                             )
 
-                        provider.change(
-                            fn=toggle_provider,
-                            inputs=[provider],
-                            outputs=[xfyun_group, openai_group, ollama_group, gemini_group],
-                        )
+                        provider.change(fn=toggle_provider, inputs=[provider], outputs=[xfyun_group, openai_group, ollama_group, gemini_group])
 
                         btn_refresh_ollama.click(
                             fn=lambda url: (
                                 fetch_ollama_models() or [],
-                                f"🔄 已刷新，发现 {len(state.ollama_models)} 个模型"
-                                if state.ollama_models else "⚠️ 未发现运行中的模型",
+                                f"已刷新，发现 {len(state.ollama_models)} 个模型" if state.ollama_models else "未发现运行中的模型",
                             ),
-                            inputs=[ollama_base_url],
-                            outputs=[ollama_model, api_status],
+                            inputs=[ollama_base_url], outputs=[ollama_model, api_status],
                         )
 
                         def on_xfyun_model_change(provider_val):
                             if provider_val == "xfyun":
                                 return gr.update(choices=XF_MODELS, value="xsparkx2flash", visible=True)
                             return gr.update()
-
-                        provider.change(
-                            fn=on_xfyun_model_change,
-                            inputs=[provider],
-                            outputs=[xfyun_model],
-                        )
+                        provider.change(fn=on_xfyun_model_change, inputs=[provider], outputs=[xfyun_model])
 
                         with gr.Row():
-                            temperature = gr.Slider(
-                                minimum=0.0, maximum=2.0, value=0.7,
-                                step=0.1, label="Temperature",
-                                info="创意程度（高=更创意，低=更确定）",
-                            )
-                            max_tokens = gr.Slider(
-                                minimum=512, maximum=32768, value=8192,
-                                step=256, label="Max Tokens",
-                                info="单次最大输出",
-                            )
+                            temperature = gr.Slider(minimum=0.0, maximum=2.0, value=0.7, step=0.1, label="Temperature")
+                            max_tokens = gr.Slider(minimum=512, maximum=32768, value=8192, step=256, label="Max Tokens")
 
-                        gr.HTML("</div>")
-
-                        gr.HTML("<div class='panel-section' style='margin-top:12px'>")
-                        gr.HTML("<b>🎬 输出选项</b>")
+                        gr.HTML("<b>输出选项</b>")
                         with gr.Row():
-                            add_camera = gr.Checkbox(value=True, label="添加镜头建议", info="生成 camera 镜头方向")
-                            add_transitions = gr.Checkbox(value=True, label="添加转场", info="生成淡入淡出等转场")
-                            preserve_narrative = gr.Checkbox(value=True, label="保留旁白", info="保留叙述性文字")
-                        gr.HTML("</div>")
+                            add_camera = gr.Checkbox(value=True, label="添加镜头建议")
+                            add_transitions = gr.Checkbox(value=True, label="添加转场")
+                            preserve_narrative = gr.Checkbox(value=True, label="保留旁白")
 
-                    # Right panel: Output
                     with gr.Column(scale=2, min_width=500):
-                        btn_convert = gr.Button(
-                            "🚀 开始转换",
-                            variant="primary",
-                            size="lg",
-                        )
+                        btn_convert = gr.Button("开始转换", variant="primary", size="lg")
 
-                        status_output = gr.Textbox(
-                            label="处理状态",
-                            lines=4,
-                            interactive=False,
-                            show_copy_button=True,
-                        )
-
-                        yaml_editor = gr.Code(
-                            label="��? 剧本 YAML（可编辑）",
-                            language="yaml",
-                            lines=25,
-                        )
+                        status_output = gr.Textbox(label="处理状态", lines=4, interactive=False)
+                        yaml_editor = gr.Code(label="剧本 YAML（可编辑）", language="yaml", lines=25)
 
                         with gr.Row():
-                            btn_validate = gr.Button("✅ 验证 YAML", variant="secondary")
-                            validation_result = gr.HTML("<span style='color:#888'>点击「验证 YAML」检查格式</span>")
-                            btn_copy = gr.Button("📋 复制", variant="secondary")
+                            btn_validate = gr.Button("验证 YAML", variant="secondary")
+                            validation_result = gr.HTML("<span style='color:#888'>点击 验证 YAML 检查格式</span>")
 
-                        btn_validate.click(
-                            fn=validate_yaml,
-                            inputs=[yaml_editor],
-                            outputs=[validation_result],
-                        )
+                        btn_validate.click(fn=validate_yaml, inputs=[yaml_editor], outputs=[validation_result])
 
-                        btn_copy.click(
-                            fn=lambda x: x,
-                            inputs=[yaml_editor],
-                            outputs=[],
-                        )
-
-                        gr.HTML("<hr>")
-
-                        with gr.Accordion("📥 导出选项", open=False):
+                        with gr.Accordion("导出选项", open=False):
                             with gr.Row():
-                                btn_export_yaml = gr.Button("💾 下载 YAML 文件", variant="primary")
-                                btn_export_txt = gr.Button("📄 导出为 TXT 剧本", variant="secondary")
+                                btn_export_yaml = gr.Button("下载 YAML 文件", variant="primary")
+                                btn_export_txt = gr.Button("导出为 TXT 剧本", variant="secondary")
 
-                            export_yaml_file = gr.File(
-                                label="YAML 下载",
-                                visible=False,
-                            )
-                            export_txt_file = gr.Textbox(
-                                label="TXT 剧本预览",
-                                lines=15,
-                                show_copy_button=True,
-                            )
+                            export_yaml_file = gr.File(label="YAML 下载", visible=False)
+                            export_txt_file = gr.Textbox(label="TXT 剧本预览", lines=15)
 
-                            btn_export_yaml.click(
-                                fn=export_yaml,
-                                inputs=[yaml_editor, title_input],
-                                outputs=[export_yaml_file],
-                            )
+                            btn_export_yaml.click(fn=export_yaml, inputs=[yaml_editor, title_input], outputs=[export_yaml_file])
+                            btn_export_txt.click(fn=export_screenplay, inputs=[yaml_editor], outputs=[export_txt_file])
 
-                            btn_export_txt.click(
-                                fn=export_screenplay,
-                                inputs=[yaml_editor],
-                                outputs=[export_txt_file],
-                            )
-
-                # Conversion logic
                 btn_convert.click(
                     fn=do_convert,
                     inputs=[
-                        input_method, text_input, file_input,
-                        title_input, author_input,
-                        provider,
-                        xfyun_model,
+                        input_method, text_input, file_input, title_input, author_input,
+                        provider, xfyun_model,
                         openai_api_key, openai_model,
                         ollama_model, ollama_base_url,
                         gemini_api_key, gemini_model,
@@ -704,28 +545,27 @@ def build_ui():
                     outputs=[status_output, yaml_editor],
                 )
 
-            # ── Tab 2: YAML Schema 参考 ─────────────────────────
-            with gr.Tab("📋 YAML Schema 参考"):
+            with gr.Tab("YAML Schema 参考"):
                 gr.HTML("""
                 <div style="padding: 16px; line-height: 1.8; font-size: 14px;">
-                <h2>📋 Novel2Script YAML Schema 参考</h2>
+                <h2>Novel2Script YAML Schema 参考</h2>
                 <p style="color: var(--text-color-subdued);">完整 Schema 定义请参阅项目根目录的 <code>YAML_SCHEMA.md</code> 文件。</p>
 
-                <h3>🔑 核心结构（5 个顶层键）</h3>
+                <h3>核心结构（5 个顶层键）</h3>
                 <pre style="background: var(--background-fill-secondary); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px;">
 script:        # 脚本基本元信息（必填）
 metadata:      # 制作级元数据（必填）
-characters:    # 角色列表（必填，≥1 个）
+characters:    # 角色列表（必填，>=1 个）
 act_structure: # 幕结构定义（必填，3 个 act）
-scenes:        # 场景列表（必填，≥1 个）
+scenes:        # 场景列表（必填，>=1 个）
                 </pre>
 
-                <h3>👤 characters — 角色定义</h3>
+                <h3>characters — 角色定义</h3>
                 <pre style="background: var(--background-fill-secondary); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 12px;">
 - id: "char_001"              # 全局唯一 ID
-  name: "李明"                 # 角色名
+  name: "角色名"               # 角色名
   role: "protagonist"          # protagonist | antagonist | supporting | minor | narrator
-  description: "角色描述..."     # ≥10 字符
+  description: "角色描述..."     # >=10 字符
   voice: "语音特征"             # 可选
   first_appearance: 1          # 首次出场场景编号
   relationships:               # 可选
@@ -734,7 +574,7 @@ scenes:        # 场景列表（必填，≥1 个）
       description: "关系描述"
                 </pre>
 
-                <h3>🎬 scenes — 场景元素类型</h3>
+                <h3>scenes — 场景元素类型</h3>
                 <table style="width:100%; border-collapse: collapse; font-size: 13px;">
                 <tr style="background: var(--background-fill-secondary);">
                     <th style="padding:8px;border:1px solid var(--border-color)">type</th>
@@ -748,7 +588,7 @@ scenes:        # 场景列表（必填，≥1 个）
                 <tr><td style="padding:8px;border:1px solid var(--border-color)">camera</td><td style="padding:8px;border:1px solid var(--border-color)">content</td><td style="padding:8px;border:1px solid var(--border-color)">镜头建议</td></tr>
                 </table>
 
-                <h3>💡 设计亮点</h3>
+                <h3>设计亮点</h3>
                 <ul>
                 <li><b>全局角色表 + ID 引用</b>：角色在 <code>characters</code> 中定义一次，场景中通过 <code>char_XXX</code> ID 引用，避免名字不一致问题</li>
                 <li><b>固定三幕制</b>：幕结构（Setup / Confrontation / Resolution）是剧本写作的事实标准</li>
@@ -759,42 +599,42 @@ scenes:        # 场景列表（必填，≥1 个）
                 </div>
                 """)
 
-            # ── Tab 3: 使用说明 ─────────────────────────────────
-            with gr.Tab("❓ 使用说明"):
+            with gr.Tab("使用说明"):
                 gr.HTML("""
                 <div style="padding: 16px; line-height: 1.8; font-size: 14px;">
-                <h2>❓ 使用说明</h2>
+                <h2>使用说明</h2>
 
-                <h3>🚀 快速开始</h3>
+                <h3>快速开始</h3>
                 <ol>
                 <li>在「小说转剧本」标签页，选择输入方式（粘贴文本或上传文件）</li>
                 <li>填写剧本标题和原作者（可选）</li>
                 <li>选择 AI 提供商并配置 API Key</li>
-                <li>调整输出选项，点击「🚀 开始转换」</li>
+                <li>调整输出选项，点击「开始转换」</li>
                 <li>等待 AI 生成剧本 YAML，在编辑器中查看和修改</li>
                 <li>导出为 YAML 文件或 TXT 剧本格式</li>
                 </ol>
 
-                <h3>🔧 AI 配置说明</h3>
+                <h3>AI 配置说明</h3>
                 <table style="width:100%; border-collapse: collapse;">
                 <tr style="background: var(--background-fill-secondary);">
                     <th style="padding:8px;border:1px solid var(--border-color)">提供商</th>
                     <th style="padding:8px;border:1px solid var(--border-color)">说明</th>
                     <th style="padding:8px;border:1px solid var(--border-color)">推荐模型</th>
                 </tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">OpenAI</td><td style="padding:8px;border:1px solid var(--border-color)">效果最好，需要 API Key</td><td style="padding:8px;border:1px solid var(--border-color)">gpt-4o-mini（性价比高）</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">Ollama</td><td style="padding:8px;border:1px solid var(--border-color)">本地运行，免费，支持 qwen/deepseek/llama 等</td><td style="padding:8px;border:1px solid var(--border-color)">qwen2.5、deepseek-r1</td></tr>
-                <tr><td style="padding:8px;border:1px solid var(--border-color)">Gemini</td><td style="padding:8px;border:1px solid var(--border-color)">Google 的多模态模型</td><td style="padding:8px;border:1px solid var(--border-color)">gemini-1.5-flash</td></tr>
+                <tr><td style="padding:8px;border:1px solid var(--border-color)">讯飞 MaaS Coding</td><td style="padding:8px;border:1px solid var(--border-color)">内置 API Key，开箱即用</td><td style="padding:8px;border:1px solid var(--border-color)">xsparkx2flash</td></tr>
+                <tr><td style="padding:8px;border:1px solid var(--border-color)">OpenAI</td><td style="padding:8px;border:1px solid var(--border-color)">效果最好，需要 API Key</td><td style="padding:8px;border:1px solid var(--border-color)">gpt-4o-mini</td></tr>
+                <tr><td style="padding:8px;border:1px solid var(--border-color)">Ollama</td><td style="padding:8px;border:1px solid var(--border-color)">本地运行，免费</td><td style="padding:8px;border:1px solid var(--border-color)">qwen2.5</td></tr>
+                <tr><td style="padding:8px;border:1px solid var(--border-color)">Gemini</td><td style="padding:8px;border:1px solid var(--border-color)">Google 多模态模型</td><td style="padding:8px;border:1px solid var(--border-color)">gemini-1.5-flash</td></tr>
                 </table>
 
-                <h3>📁 支持的输入格式</h3>
+                <h3>支持的输入格式</h3>
                 <ul>
                 <li><b>.txt</b>：纯文本文件，自动检测编码（UTF-8/GBK/GB2312）</li>
                 <li><b>.docx</b>：Word 文档，自动提取正文段落</li>
                 <li><b>.pdf</b>：PDF 文档，提取文本内容</li>
                 </ul>
 
-                <h3>⚠️ 注意事项</h3>
+                <h3>注意事项</h3>
                 <ul>
                 <li>小说至少需要包含 3 个章节，否则无法转换</li>
                 <li>文本建议 3000 字以上，章节越多转换效果越好</li>

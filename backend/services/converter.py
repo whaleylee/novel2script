@@ -225,7 +225,7 @@ async def convert_novel(
     # Step 5: Per-chapter scene generation
     yield "正在逐章生成场景...\n"
     all_scenes = []
-    character_map = {c["id"]: c for c in global_data.get("characters", [])}
+    character_map = {c["id"]: c for c in (global_data or {}).get("characters", [])}
 
     for i, (title, content) in enumerate(chapters):
         yield f"正在生成第 {i + 1}/{chapter_count} 章的场景...\n"
